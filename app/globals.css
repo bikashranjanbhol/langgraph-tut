@@ -1,0 +1,224 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --bg: 255 255 255;
+    --bg-subtle: 248 250 252;
+    --fg: 11 15 23;
+    --border: 226 232 240;
+    --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+      "Helvetica Neue", Arial, "Noto Sans", sans-serif, "Apple Color Emoji",
+      "Segoe UI Emoji";
+    --font-mono: ui-monospace, "SF Mono", "SFMono-Regular", "JetBrains Mono",
+      "Cascadia Code", "Fira Code", Menlo, Consolas, "Liberation Mono", monospace;
+    color-scheme: light;
+  }
+
+  .dark {
+    --bg: 6 9 16;
+    --bg-subtle: 11 15 23;
+    --fg: 236 238 242;
+    --border: 30 41 59;
+    color-scheme: dark;
+  }
+
+  * {
+    border-color: rgb(var(--border));
+  }
+
+  html {
+    scroll-behavior: smooth;
+    scroll-padding-top: 6rem;
+  }
+
+  body {
+    background-color: rgb(var(--bg));
+    color: rgb(var(--fg));
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  ::selection {
+    background-color: rgb(16 185 129 / 0.28);
+  }
+}
+
+@layer components {
+  /* Decorative dotted grid used on hero + section backgrounds */
+  .bg-grid {
+    background-image: radial-gradient(
+      circle at 1px 1px,
+      rgb(148 163 184 / 0.18) 1px,
+      transparent 0
+    );
+    background-size: 28px 28px;
+  }
+
+  .gradient-text {
+    @apply bg-gradient-to-r from-brand-500 via-emerald-400 to-teal-300 bg-clip-text text-transparent;
+  }
+
+  .card {
+    @apply rounded-2xl border bg-white/70 backdrop-blur-sm transition-all duration-300 dark:bg-ink-900/60;
+  }
+
+  .card-hover {
+    @apply hover:-translate-y-1 hover:border-brand-400/60 hover:shadow-xl hover:shadow-brand-500/10;
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Code blocks (rehype-pretty-code + shiki dual-theme)                 */
+/* ------------------------------------------------------------------ */
+
+/* rehype-pretty-code dual theme sets --shiki-light / --shiki-dark CSS vars on
+   each token span. Apply the right one for the active theme. */
+html:not(.dark) [data-rehype-pretty-code-figure] code span {
+  color: var(--shiki-light) !important;
+  font-style: var(--shiki-light-font-style);
+  font-weight: var(--shiki-light-font-weight);
+  text-decoration: var(--shiki-light-text-decoration);
+}
+.dark [data-rehype-pretty-code-figure] code span {
+  color: var(--shiki-dark) !important;
+  font-style: var(--shiki-dark-font-style);
+  font-weight: var(--shiki-dark-font-weight);
+  text-decoration: var(--shiki-dark-text-decoration);
+}
+
+[data-rehype-pretty-code-figure] {
+  position: relative;
+  margin: 1.5rem 0;
+}
+
+[data-rehype-pretty-code-figure] pre {
+  overflow-x: auto;
+  border-radius: 0.9rem;
+  border: 1px solid rgb(var(--border));
+  background-color: rgb(248 250 252) !important;
+  padding: 1.1rem 0;
+  font-size: 0.875rem;
+  line-height: 1.7;
+}
+
+.dark [data-rehype-pretty-code-figure] pre {
+  background-color: rgb(10 14 22) !important;
+}
+
+[data-rehype-pretty-code-figure] code {
+  display: grid;
+  counter-reset: line;
+  background: transparent;
+  font-family: var(--font-mono), ui-monospace, monospace;
+}
+
+[data-rehype-pretty-code-figure] code[data-line-numbers] > [data-line]::before {
+  counter-increment: line;
+  content: counter(line);
+  display: inline-block;
+  width: 1.4rem;
+  margin-right: 1.2rem;
+  text-align: right;
+  color: rgb(148 163 184 / 0.5);
+}
+
+[data-line] {
+  padding: 0 1.25rem;
+  border-left: 2px solid transparent;
+}
+
+[data-highlighted-line] {
+  background-color: rgb(16 185 129 / 0.1);
+  border-left-color: rgb(16 185 129 / 0.8);
+}
+
+[data-rehype-pretty-code-figure] [data-highlighted-chars] {
+  border-radius: 0.25rem;
+  background-color: rgb(16 185 129 / 0.16);
+  padding: 0.1rem 0.25rem;
+}
+
+/* Code block title (```py title="app.py") */
+[data-rehype-pretty-code-title] {
+  border-top-left-radius: 0.9rem;
+  border-top-right-radius: 0.9rem;
+  border: 1px solid rgb(var(--border));
+  border-bottom: none;
+  background-color: rgb(241 245 249);
+  padding: 0.55rem 1.25rem;
+  font-family: var(--font-mono), monospace;
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: rgb(71 85 105);
+}
+.dark [data-rehype-pretty-code-title] {
+  background-color: rgb(15 20 30);
+  color: rgb(148 163 184);
+}
+[data-rehype-pretty-code-title] + pre {
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+}
+
+/* Inline code */
+.prose :not(pre) > code {
+  font-family: var(--font-mono), monospace;
+  font-size: 0.85em;
+  font-weight: 500;
+  background-color: rgb(16 185 129 / 0.1);
+  color: rgb(4 120 87);
+  padding: 0.15rem 0.4rem;
+  border-radius: 0.35rem;
+  border: 1px solid rgb(16 185 129 / 0.15);
+}
+.dark .prose :not(pre) > code {
+  color: rgb(110 231 189);
+}
+.prose :not(pre) > code::before,
+.prose :not(pre) > code::after {
+  content: none;
+}
+
+/* Heading anchors */
+.prose .heading-anchor {
+  color: inherit;
+  text-decoration: none;
+}
+.prose .heading-anchor:hover {
+  text-decoration: none;
+}
+.prose h2,
+.prose h3 {
+  scroll-margin-top: 6rem;
+}
+
+/* Reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background-color: rgb(148 163 184 / 0.35);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background-color: rgb(148 163 184 / 0.6);
+}

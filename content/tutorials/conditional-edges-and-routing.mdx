@@ -1,0 +1,169 @@
+---
+title: "Conditional Edges & Routing"
+description: "Make your graph dynamic. Learn conditional edges, routing functions, building loops and branches, the Command primitive, and how super-steps drive execution."
+order: 5
+difficulty: "Intermediate"
+duration: "13 min"
+category: "State & Control Flow"
+tags: ["conditional-edges", "routing", "loops", "command", "control-flow"]
+updated: "2026-07-01"
+---
+
+Fixed edges give you straight-line pipelines. **Conditional edges** give you agents. They let the graph inspect its state and decide, at runtime, where to go next — enabling branches, loops, and early exits. This is the single most important control-flow tool in LangGraph.
+
+## Anatomy of a conditional edge
+
+A conditional edge has three parts:
+
+1. The **source node** it branches from.
+2. A **routing function** that reads the state and returns a key.
+3. A **mapping** from keys to destination node names.
+
+```python
+def route(state: State) -> str:
+    if state["needs_tool"]:
+        return "call_tool"
+    return "respond"
+
+
+builder.add_conditional_edges(
+    "agent",              # source node
+    route,                # routing function
+    {                     # key → destination mapping
+        "call_tool": "tools",
+        "respond": "final",
+    },
+)
+```
+
+After the `agent` node runs, LangGraph calls `route(state)`. If it returns `"call_tool"`, execution proceeds to the `tools` node; if `"respond"`, to `final`.
+
+<Callout type="tip" title="The mapping is optional">
+If your routing function returns node names directly, you can skip the mapping dictionary:
+
+```python
+def route(state: State) -> str:
+    return "tools" if state["needs_tool"] else "final"
+
+builder.add_conditional_edges("agent", route)
+```
+
+The explicit mapping is still useful for readability and for decoupling the returned keys from node names.
+</Callout>
+
+## Routing to the end
+
+A routing function can return `END` to finish the graph early:
+
+```python
+from langgraph.graph import END
+
+
+def route(state: State) -> str:
+    if state["done"]:
+        return END
+    return "keep_working"
+
+
+builder.add_conditional_edges("worker", route, {END: END, "keep_working": "worker"})
+```
+
+## Building a loop
+
+Loops are just conditional edges that point backward. Here's a graph that keeps refining an answer until a quality check passes — the canonical LangGraph loop shape:
+
+```python
+from typing_extensions import TypedDict
+from langgraph.graph import StateGraph, START, END
+
+
+class State(TypedDict):
+    draft: str
+    score: int
+    attempts: int
+
+
+def generate(state: State) -> dict:
+    # produce or refine a draft
+    return {"draft": improve(state.get("draft", "")), "attempts": state.get("attempts", 0) + 1}
+
+
+def evaluate(state: State) -> dict:
+    return {"score": grade(state["draft"])}
+
+
+def route(state: State) -> str:
+    if state["score"] >= 8 or state["attempts"] >= 5:
+        return "done"
+    return "retry"
+
+
+builder = StateGraph(State)
+builder.add_node("generate", generate)
+builder.add_node("evaluate", evaluate)
+
+builder.add_edge(START, "generate")
+builder.add_edge("generate", "evaluate")
+builder.add_conditional_edges("evaluate", route, {"retry": "generate", "done": END})
+
+graph = builder.compile()
+```
+
+The `evaluate → generate` back-edge creates the loop. Notice the **two exit conditions**: a good enough score *or* a maximum number of attempts. Always give loops a termination guard.
+
+<Callout type="warning" title="Guard against infinite loops">
+A loop with no exit condition will run forever. Besides an explicit guard in your routing logic, LangGraph enforces a `recursion_limit` (default 25 super-steps) and raises `GraphRecursionError` if exceeded. Raise it deliberately with `graph.invoke(input, {"recursion_limit": 100})` when you truly need more steps — never to paper over a missing exit condition.
+</Callout>
+
+## Super-steps: how execution advances
+
+LangGraph executes in **super-steps**. In each super-step, every node that's ready runs; their state updates are merged (via reducers); then edges are evaluated to decide what runs next. A single node running counts as one super-step. Nodes that run in parallel share a super-step.
+
+The `recursion_limit` counts super-steps, not individual node calls — a useful distinction when your graph fans out.
+
+## Parallel branches
+
+Return multiple edges from a source and the destinations run **in parallel** within one super-step:
+
+```python
+builder.add_edge("dispatch", "search_web")
+builder.add_edge("dispatch", "search_docs")
+builder.add_edge("dispatch", "search_db")
+# All three run concurrently after `dispatch`.
+```
+
+Their results merge according to the reducers on the channels they write. This is how you fan out work and gather it back — see the multi-agent lesson for a fuller example.
+
+## The Command primitive
+
+Sometimes you want a node to both **update state and decide where to go** in one place, rather than splitting logic across a node and a separate routing function. `Command` lets a node do both:
+
+```python
+from langgraph.types import Command
+from typing import Literal
+
+
+def agent(state: State) -> Command[Literal["tools", "final"]]:
+    response = llm.invoke(state["messages"])
+    goto = "tools" if response.tool_calls else "final"
+    return Command(
+        update={"messages": [response]},  # state update
+        goto=goto,                         # next node
+    )
+```
+
+The `Command[Literal["tools", "final"]]` return annotation tells LangGraph which nodes this one can route to, so it can still draw and validate the graph. `Command` is especially clean for handoffs in multi-agent systems, where each agent decides who acts next.
+
+<Callout type="note" title="Conditional edges vs. Command">
+Use **conditional edges** when routing is a separate concern from the node's work — it keeps the graph structure visible in the builder. Use **`Command`** when the routing decision is tightly coupled to what the node just computed, or when you're doing dynamic handoffs. Both are first-class; pick whichever reads more clearly.
+</Callout>
+
+## Recap
+
+- **Conditional edges** call a routing function to pick the next node from the state.
+- Return `END` to finish; return a previous node's name to **loop**.
+- Always give loops a **termination condition**; `recursion_limit` is a backstop.
+- Execution advances in **super-steps**; parallel destinations share a super-step and merge via reducers.
+- **`Command`** lets a single node update state *and* route in one return.
+
+You now have every control-flow tool you need. In the next lesson we combine them into a complete **ReAct agent** that reasons, calls tools, and loops until it's done.

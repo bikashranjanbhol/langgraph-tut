@@ -1,0 +1,198 @@
+---
+title: "Core Concepts: State, Nodes & Edges"
+description: "A deep dive into the three primitives every LangGraph is built from — the shared state schema, node functions, and the edges that wire them together."
+order: 2
+difficulty: "Beginner"
+duration: "11 min"
+category: "Foundations"
+tags: ["state", "nodes", "edges", "stategraph", "concepts"]
+updated: "2026-07-01"
+---
+
+Everything in LangGraph is built from three primitives: **state**, **nodes**, and **edges**. Master these and the rest of the library is just convenience on top. Let's take each in turn.
+
+## State: the graph's shared memory
+
+The **state** is a single object that every node can read from and write to. You define its shape with a schema — most commonly a `TypedDict`, but Pydantic models and dataclasses work too.
+
+```python
+from typing_extensions import TypedDict
+
+
+class State(TypedDict):
+    question: str
+    context: str
+    answer: str
+```
+
+The state schema serves two jobs:
+
+1. It documents exactly what data flows through your application.
+2. It tells LangGraph how to **merge updates** from each node (more on that in the reducers lesson).
+
+When a node returns `{"answer": "42"}`, LangGraph takes that partial update and merges it into the running state. Keys you don't return are left untouched.
+
+<Callout type="note" title="Partial updates, not mutations">
+Nodes return a dictionary describing *what changed*. They should not mutate the incoming state object directly. This keeps execution predictable and makes features like persistence and time-travel possible.
+</Callout>
+
+## Nodes: where the work happens
+
+A **node** is just a function. It receives the current state and returns a partial update:
+
+```python
+def retrieve(state: State) -> dict:
+    docs = search_knowledge_base(state["question"])
+    return {"context": docs}
+
+
+def generate(state: State) -> dict:
+    prompt = f"Context: {state['context']}\n\nQuestion: {state['question']}"
+    answer = call_model(prompt)
+    return {"answer": answer}
+```
+
+You register nodes on a `StateGraph` builder, giving each a name:
+
+```python
+from langgraph.graph import StateGraph
+
+builder = StateGraph(State)
+builder.add_node("retrieve", retrieve)
+builder.add_node("generate", generate)
+```
+
+By default a node's name is taken from the function, but passing an explicit string (`"retrieve"`) makes your edges readable and decouples the graph from your function names.
+
+### Nodes can be async
+
+If your work is I/O-bound — most LLM and tool calls are — define the node as `async def`. LangGraph will await it. You can freely mix sync and async nodes in the same graph.
+
+```python
+async def generate(state: State) -> dict:
+    answer = await call_model_async(state["context"])
+    return {"answer": answer}
+```
+
+## Edges: the control flow
+
+**Edges** connect nodes and decide execution order. There are two special markers, `START` and `END`, that represent the entry and exit points of the graph.
+
+### Normal edges
+
+A normal edge always goes from one node to the next:
+
+```python
+from langgraph.graph import START, END
+
+builder.add_edge(START, "retrieve")      # entry point
+builder.add_edge("retrieve", "generate") # retrieve → generate
+builder.add_edge("generate", END)        # exit
+```
+
+This describes a simple linear flow: `START → retrieve → generate → END`.
+
+### Conditional edges
+
+A **conditional edge** picks the next node at runtime by calling a routing function you provide. The function reads the state and returns the name of the next node (or a key that maps to one).
+
+```python
+def route(state: State) -> str:
+    if state["context"]:
+        return "generate"
+    return "ask_for_clarification"
+
+
+builder.add_conditional_edges(
+    "retrieve",
+    route,
+    {
+        "generate": "generate",
+        "ask_for_clarification": "ask_for_clarification",
+    },
+)
+```
+
+Conditional edges are what give LangGraph its power. Loops, branches, and early exits all come from a routing function returning different node names based on the state. We devote a whole lesson to them later.
+
+## Compiling and running
+
+Once nodes and edges are defined, you **compile** the builder into a runnable graph:
+
+```python
+graph = builder.compile()
+```
+
+Compilation validates the graph (every node reachable, no dangling edges) and returns an object with a familiar interface:
+
+```python
+# Run once, get the final state
+final_state = graph.invoke({"question": "What is LangGraph?"})
+
+# Stream intermediate updates as they happen
+for update in graph.stream({"question": "What is LangGraph?"}):
+    print(update)
+```
+
+<Callout type="tip" title="Visualize your graph">
+A compiled graph can draw itself, which is invaluable for debugging control flow:
+
+```python
+print(graph.get_graph().draw_mermaid())
+```
+
+This prints a Mermaid diagram you can paste into any Markdown renderer to see your nodes and edges.
+</Callout>
+
+## Putting it together
+
+Here is a complete, runnable two-node graph with a conditional branch:
+
+```python
+from typing_extensions import TypedDict
+from langgraph.graph import StateGraph, START, END
+
+
+class State(TypedDict):
+    number: int
+    result: str
+
+
+def check(state: State) -> dict:
+    return {}  # no state change; used only for routing
+
+
+def route(state: State) -> str:
+    return "even" if state["number"] % 2 == 0 else "odd"
+
+
+def even(state: State) -> dict:
+    return {"result": f"{state['number']} is even"}
+
+
+def odd(state: State) -> dict:
+    return {"result": f"{state['number']} is odd"}
+
+
+builder = StateGraph(State)
+builder.add_node("check", check)
+builder.add_node("even", even)
+builder.add_node("odd", odd)
+
+builder.add_edge(START, "check")
+builder.add_conditional_edges("check", route, {"even": "even", "odd": "odd"})
+builder.add_edge("even", END)
+builder.add_edge("odd", END)
+
+graph = builder.compile()
+print(graph.invoke({"number": 7})["result"])  # "7 is odd"
+```
+
+## Recap
+
+- **State** is a typed, shared data structure. Nodes return partial updates to it.
+- **Nodes** are functions that read state and do work.
+- **Edges** wire nodes together; **conditional edges** choose the path at runtime.
+- **Compile** turns the definition into a runnable graph with `invoke` and `stream`.
+
+Next, we'll build your first graph backed by a real language model.

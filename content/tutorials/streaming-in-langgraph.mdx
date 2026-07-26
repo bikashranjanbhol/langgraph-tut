@@ -1,0 +1,153 @@
+---
+title: "Streaming in LangGraph"
+description: "Make agents feel instant. Stream state updates, LLM tokens, and custom progress events with graph.stream — including the values, updates, and messages modes."
+order: 10
+difficulty: "Intermediate"
+duration: "10 min"
+category: "Memory & Interaction"
+tags: ["streaming", "tokens", "stream-modes", "events", "ux"]
+updated: "2026-07-01"
+---
+
+Agents can take many seconds to finish — calling models, running tools, looping. Making users stare at a spinner is a poor experience. **Streaming** lets you surface progress as it happens: partial tokens, each node's output, or your own custom events. LangGraph has streaming built in.
+
+## graph.stream and its modes
+
+Instead of `graph.invoke`, call `graph.stream`. It yields chunks as the graph runs. The `stream_mode` argument controls *what* you get.
+
+```python
+for chunk in graph.stream(inputs, config, stream_mode="updates"):
+    print(chunk)
+```
+
+The main modes:
+
+| Mode        | What it streams                                              |
+| ----------- | ----------------------------------------------------------- |
+| `updates`   | The state changes returned by each node, after it runs      |
+| `values`    | The full state after each step                              |
+| `messages`  | LLM tokens as they're generated, with metadata              |
+| `custom`    | Arbitrary data you emit from inside a node                  |
+| `debug`     | Detailed execution events, for tracing                      |
+
+## updates: what each node did
+
+`updates` is the most common mode for showing progress. Each chunk is a dict keyed by node name, containing just what that node returned.
+
+```python
+for chunk in graph.stream(
+    {"messages": [("user", "Research LangGraph and summarize.")]},
+    stream_mode="updates",
+):
+    for node_name, update in chunk.items():
+        print(f"[{node_name}] produced:", update)
+```
+
+This is ideal for a step-by-step activity view — "searching…", "reading…", "writing…".
+
+## values: the full state each step
+
+`values` streams the entire accumulated state after every super-step. Use it when you want to render the whole current picture, not just the delta.
+
+```python
+for state in graph.stream(inputs, stream_mode="values"):
+    print(state["messages"][-1])  # latest message at each step
+```
+
+## messages: token-by-token output
+
+To stream the model's answer as it's typed — the classic ChatGPT effect — use `messages` mode. Each chunk is a `(message_chunk, metadata)` tuple; the chunk carries incremental `content`.
+
+```python
+for token, metadata in graph.stream(inputs, stream_mode="messages"):
+    if token.content:
+        print(token.content, end="", flush=True)
+```
+
+The `metadata` tells you which node and which model produced the token, so you can, for example, stream only the final agent's tokens and ignore an internal summarizer.
+
+<Callout type="tip" title="Filter by node with metadata">
+In multi-node graphs, several LLMs may stream at once. Use `metadata["langgraph_node"]` to show tokens only from the node the user cares about:
+
+```python
+for token, metadata in graph.stream(inputs, stream_mode="messages"):
+    if metadata["langgraph_node"] == "final_answer":
+        print(token.content, end="", flush=True)
+```
+</Callout>
+
+## custom: your own progress events
+
+Inside a node you can emit custom updates — a progress percentage, a status string, an intermediate result — using the stream writer. These surface under `stream_mode="custom"`.
+
+```python
+from langgraph.config import get_stream_writer
+
+
+def long_task(state: State) -> dict:
+    writer = get_stream_writer()
+    for i, item in enumerate(items):
+        process(item)
+        writer({"progress": f"{i + 1}/{len(items)} processed"})
+    return {"done": True}
+```
+
+```python
+for chunk in graph.stream(inputs, stream_mode="custom"):
+    print(chunk)  # {"progress": "1/10 processed"}, ...
+```
+
+This is the clean way to report progress from long-running tools or loops without abusing the message channel.
+
+## Combining modes
+
+Pass a list of modes to receive several streams at once. Each yielded item is then a `(mode, data)` tuple so you can tell them apart.
+
+```python
+for mode, data in graph.stream(inputs, stream_mode=["updates", "messages"]):
+    if mode == "messages":
+        token, meta = data
+        print(token.content, end="")
+    elif mode == "updates":
+        print("\n[node finished]", data)
+```
+
+A typical UI streams `messages` for the live answer and `updates` (or `custom`) for a side panel of activity.
+
+## Async streaming
+
+For async applications, use `astream`, which yields the same chunks via an async iterator:
+
+```python
+async for chunk in graph.astream(inputs, stream_mode="updates"):
+    handle(chunk)
+```
+
+There's also `astream_events` for a fine-grained event stream (model start/end, tool start/end, and more) when you need maximum detail about everything happening inside the graph.
+
+## A complete streaming loop
+
+```python
+async def chat(graph, user_input, config):
+    print("Assistant: ", end="", flush=True)
+    async for mode, data in graph.astream(
+        {"messages": [("user", user_input)]},
+        config,
+        stream_mode=["messages", "updates"],
+    ):
+        if mode == "messages":
+            token, meta = data
+            if meta["langgraph_node"] == "agent" and token.content:
+                print(token.content, end="", flush=True)
+    print()
+```
+
+## Recap
+
+- Use **`graph.stream`** (or **`astream`**) instead of `invoke` to surface progress.
+- **`updates`** streams each node's output; **`values`** streams the full state each step.
+- **`messages`** streams LLM tokens; filter with `metadata["langgraph_node"]`.
+- **`custom`** lets nodes emit their own progress via the stream writer.
+- Pass a **list of modes** to combine streams; use **`astream_events`** for fine-grained tracing.
+
+You now have responsive, memory-backed, human-supervised agents. Next, we scale up to **multi-agent systems** — teams of agents that collaborate.

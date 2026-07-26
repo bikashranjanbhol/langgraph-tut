@@ -1,0 +1,152 @@
+---
+title: "Building Your First StateGraph"
+description: "Install LangGraph, wire up a chat model, and build a working chatbot as a StateGraph — your first end-to-end graph with a real LLM."
+order: 3
+difficulty: "Beginner"
+duration: "12 min"
+category: "Foundations"
+tags: ["stategraph", "chatbot", "installation", "add_messages", "llm"]
+updated: "2026-07-01"
+---
+
+Time to build something real. In this lesson you'll create a chatbot as a `StateGraph` — a single-node graph backed by a chat model. It's small, but it introduces the exact pattern that scales all the way up to multi-agent systems.
+
+## Installation
+
+Install LangGraph and a model provider. We'll use Anthropic's Claude here, but any LangChain chat model works.
+
+```bash
+pip install -U langgraph "langchain[anthropic]"
+```
+
+Set your API key as an environment variable:
+
+```bash
+export ANTHROPIC_API_KEY="sk-ant-..."
+```
+
+<Callout type="note" title="Any provider works">
+LangGraph is model-agnostic. Swap `anthropic` for `openai`, `google-genai`, or a local model — the graph code stays identical. Only the model initialization line changes.
+</Callout>
+
+## Defining the state
+
+A chatbot's state is a list of messages that grows with each turn. LangGraph ships a helper — `add_messages` — that knows how to append new messages to the existing list rather than overwrite it.
+
+```python
+from typing import Annotated
+from typing_extensions import TypedDict
+from langgraph.graph.message import add_messages
+
+
+class State(TypedDict):
+    messages: Annotated[list, add_messages]
+```
+
+The `Annotated[list, add_messages]` syntax attaches a **reducer** to the `messages` key. When a node returns new messages, `add_messages` merges them into the list intelligently. We'll unpack reducers fully in the next lesson — for now, just know it means "append, don't replace."
+
+## Initializing the model
+
+Use `init_chat_model` to load a chat model with a single line. The `"anthropic:..."` prefix selects the provider.
+
+```python
+from langchain.chat_models import init_chat_model
+
+llm = init_chat_model("anthropic:claude-sonnet-5")
+```
+
+To use a different provider, change the string — for example `"openai:gpt-4o"` or `"google-genai:gemini-2.0-flash"`.
+
+## Writing the chatbot node
+
+The node takes the conversation so far, calls the model, and returns the model's reply. Because `messages` uses the `add_messages` reducer, returning a single new message appends it to the history.
+
+```python
+def chatbot(state: State) -> dict:
+    response = llm.invoke(state["messages"])
+    return {"messages": [response]}
+```
+
+That's the whole node. `llm.invoke` accepts the message list and returns an `AIMessage`, which we wrap in a list to hand back to the graph.
+
+## Assembling the graph
+
+Wire the single node between `START` and `END`:
+
+```python
+from langgraph.graph import StateGraph, START, END
+
+builder = StateGraph(State)
+builder.add_node("chatbot", chatbot)
+builder.add_edge(START, "chatbot")
+builder.add_edge("chatbot", END)
+
+graph = builder.compile()
+```
+
+## Running it
+
+Invoke the graph with an initial user message. LangGraph accepts messages as simple `(role, content)` tuples or dictionaries and converts them for you.
+
+```python
+result = graph.invoke(
+    {"messages": [("user", "What is LangGraph in one sentence?")]}
+)
+print(result["messages"][-1].content)
+```
+
+The final state's `messages` list now contains both your question and the assistant's answer. `result["messages"][-1]` is the latest message — the reply.
+
+## Making it interactive
+
+A single call isn't much of a chatbot. Here's a simple REPL loop. Note that we don't yet carry history between turns — each `invoke` starts fresh. We'll fix that when we add persistence.
+
+```python
+while True:
+    user_input = input("You: ")
+    if user_input.lower() in {"quit", "exit"}:
+        break
+    for event in graph.stream({"messages": [("user", user_input)]}):
+        for value in event.values():
+            print("Bot:", value["messages"][-1].content)
+```
+
+Using `graph.stream` instead of `graph.invoke` yields updates as each node finishes — a small taste of the streaming lesson to come.
+
+## The full example
+
+```python
+from typing import Annotated
+from typing_extensions import TypedDict
+from langchain.chat_models import init_chat_model
+from langgraph.graph import StateGraph, START, END
+from langgraph.graph.message import add_messages
+
+llm = init_chat_model("anthropic:claude-sonnet-5")
+
+
+class State(TypedDict):
+    messages: Annotated[list, add_messages]
+
+
+def chatbot(state: State) -> dict:
+    return {"messages": [llm.invoke(state["messages"])]}
+
+
+builder = StateGraph(State)
+builder.add_node("chatbot", chatbot)
+builder.add_edge(START, "chatbot")
+builder.add_edge("chatbot", END)
+graph = builder.compile()
+
+result = graph.invoke({"messages": [("user", "Hello!")]})
+print(result["messages"][-1].content)
+```
+
+<Callout type="success" title="You built a graph">
+Twenty lines, one node, and you have a working LLM application with a clean, extensible structure. Everything from here — tools, memory, routing, multiple agents — is adding nodes and edges to this same skeleton.
+</Callout>
+
+## What's next
+
+Right now the model can only talk. It can't remember past turns or take actions. In the next lesson we'll look closely at **state management and reducers** — the machinery behind `add_messages` — so you understand exactly how state flows and merges through your graph.

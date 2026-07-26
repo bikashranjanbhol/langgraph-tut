@@ -1,0 +1,172 @@
+---
+title: "Multi-Agent Systems"
+description: "Coordinate multiple specialized agents. Learn the supervisor and network architectures, agent handoffs with Command, subgraphs, and when to split one agent into many."
+order: 11
+difficulty: "Advanced"
+duration: "15 min"
+category: "Advanced Patterns"
+tags: ["multi-agent", "supervisor", "handoff", "subgraphs", "orchestration"]
+updated: "2026-07-01"
+---
+
+A single agent with many tools eventually strains: the prompt bloats, tool selection gets unreliable, and one context window juggles unrelated concerns. The fix is **multiple specialized agents** that collaborate. LangGraph is purpose-built for this — each agent is a node (or a subgraph), and edges route work between them.
+
+## When to go multi-agent
+
+Reach for multiple agents when you notice:
+
+- **Too many tools** for one agent to choose among reliably.
+- **Distinct domains** — a coder, a researcher, a reviewer — each needing its own instructions.
+- **Context that should stay separate** — you don't want the researcher's scratch work polluting the writer's context.
+- **Parallelizable work** that different specialists can tackle at once.
+
+If a single ReAct agent handles your task cleanly, keep it. Multi-agent adds coordination overhead; use it when the benefits above are real.
+
+## Architecture 1: the supervisor
+
+The most common pattern. A **supervisor** agent receives the task and delegates to worker agents, deciding who acts next based on progress. Workers report back to the supervisor, which routes again until the job is done.
+
+```
+          ┌─────────────┐
+          │  supervisor │◄──────┐
+          └──┬───┬───┬──┘       │ results
+     route   │   │   │          │
+        ┌────┘   │   └────┐     │
+        ▼        ▼        ▼     │
+   ┌────────┐ ┌──────┐ ┌──────┐ │
+   │research│ │ code │ │review│─┘
+   └────────┘ └──────┘ └──────┘
+```
+
+The supervisor is itself an LLM node that picks the next worker. We can express its choice with a `Command` that both records a decision and routes:
+
+```python
+from typing import Literal
+from langgraph.types import Command
+from langgraph.graph import StateGraph, MessagesState, START, END
+from langchain.chat_models import init_chat_model
+
+llm = init_chat_model("anthropic:claude-sonnet-5")
+WORKERS = ["researcher", "coder", "reviewer"]
+
+
+def supervisor(state: MessagesState) -> Command[Literal[*WORKERS, "__end__"]]:
+    decision = llm.with_structured_output(RouteDecision).invoke([
+        ("system", f"You route work to: {WORKERS}. Reply with the next worker, or FINISH."),
+        *state["messages"],
+    ])
+    goto = END if decision.next == "FINISH" else decision.next
+    return Command(goto=goto)
+```
+
+Each worker does its job and hands control back to the supervisor:
+
+```python
+def researcher(state: MessagesState) -> Command[Literal["supervisor"]]:
+    result = research_agent.invoke(state)
+    return Command(
+        update={"messages": result["messages"][-1:]},
+        goto="supervisor",
+    )
+```
+
+Wire it up: the supervisor is the entry point, and every worker routes back to it.
+
+```python
+builder = StateGraph(MessagesState)
+builder.add_node("supervisor", supervisor)
+builder.add_node("researcher", researcher)
+builder.add_node("coder", coder)
+builder.add_node("reviewer", reviewer)
+
+builder.add_edge(START, "supervisor")
+# Workers route back via Command(goto="supervisor"); no static edges needed.
+graph = builder.compile()
+```
+
+<Callout type="tip" title="Prebuilt supervisor">
+LangGraph offers `langgraph-supervisor`, a helper that builds this pattern for you from a list of agents. Building it by hand first — as above — makes the prebuilt far less magical when you reach for it.
+
+```python
+from langgraph_supervisor import create_supervisor
+
+app = create_supervisor(
+    agents=[research_agent, coding_agent],
+    model=llm,
+    prompt="You manage a research and a coding agent. Delegate appropriately.",
+).compile()
+```
+</Callout>
+
+## Architecture 2: the network (agents hand off to each other)
+
+In a **network** (or "swarm"), agents talk to each other directly rather than through a central supervisor. Any agent can hand off to any other. This suits fluid workflows where the next specialist depends on what the current one discovers.
+
+Handoffs are expressed as `Command(goto=...)`, often wrapped in a tool the agent can call:
+
+```python
+from langchain_core.tools import tool
+from langgraph.types import Command
+
+
+@tool
+def transfer_to_billing() -> Command:
+    """Hand the conversation off to the billing specialist."""
+    return Command(goto="billing_agent", graph=Command.PARENT)
+```
+
+When an agent calls this tool, control transfers to `billing_agent`. The `graph=Command.PARENT` tells LangGraph to route in the parent graph, which matters when agents are subgraphs (below).
+
+## Sharing state between agents
+
+Agents in one graph share the same state object, so a common `messages` channel lets them see each other's work. When you want isolation — each agent keeping private scratch space — give agents their own channels, or make each agent a **subgraph** with its own internal state, exposing only what the parent needs.
+
+## Subgraphs: agents as reusable graphs
+
+A **subgraph** is a compiled graph used as a node inside a larger graph. Each of your agents can be its own full ReAct graph, composed into a team.
+
+```python
+# research_agent and writer_agent are each compiled graphs
+parent = StateGraph(MessagesState)
+parent.add_node("research", research_agent)   # a subgraph as a node
+parent.add_node("write", writer_agent)
+
+parent.add_edge(START, "research")
+parent.add_edge("research", "write")
+parent.add_edge("write", END)
+team = parent.compile()
+```
+
+Subgraphs keep each agent independently testable and reusable. If the parent and subgraph share state keys (like `messages`), state flows automatically; if their schemas differ, you transform state in a wrapper node.
+
+<Callout type="note" title="Choosing an architecture">
+**Supervisor** — clear delegation, easy to reason about, one place that decides. Best default.
+**Network** — flexible peer-to-peer handoffs for open-ended flows, at the cost of harder-to-predict control flow.
+**Subgraphs** — an orthogonal tool: use them to package any agent, under either architecture, for isolation and reuse.
+</Callout>
+
+## Parallel specialists
+
+When subtasks are independent, fan out to several agents at once and gather their results. Recall from the routing lesson that multiple edges from one node run in parallel, merging through reducers:
+
+```python
+builder.add_edge("dispatch", "market_analyst")
+builder.add_edge("dispatch", "tech_analyst")
+builder.add_edge("dispatch", "risk_analyst")
+# All three run concurrently; a `synthesize` node combines their outputs.
+builder.add_edge("market_analyst", "synthesize")
+builder.add_edge("tech_analyst", "synthesize")
+builder.add_edge("risk_analyst", "synthesize")
+```
+
+Make sure the channel they all write to has an accumulating reducer (like `operator.add`) so no result is lost.
+
+## Recap
+
+- Go **multi-agent** when one agent has too many tools, spans distinct domains, or needs isolated context.
+- The **supervisor** delegates to workers and routes until done — the best default.
+- A **network** lets agents hand off to each other directly via `Command(goto=...)`.
+- **Subgraphs** package agents for isolation and reuse under any architecture.
+- Fan out to **parallel** specialists and merge with reducers for independent subtasks.
+
+One lesson left: taking your graph to production with **deployment and the LangGraph Platform**.

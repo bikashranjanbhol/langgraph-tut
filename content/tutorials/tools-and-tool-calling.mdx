@@ -1,0 +1,151 @@
+---
+title: "Tools & Tool Calling"
+description: "Write robust tools for your agents — the @tool decorator, argument schemas, error handling, ToolNode, accessing graph state and config, and forcing tool choice."
+order: 7
+difficulty: "Intermediate"
+duration: "12 min"
+category: "Building Agents"
+tags: ["tools", "tool-calling", "toolnode", "schemas", "error-handling"]
+updated: "2026-07-01"
+---
+
+Tools are how an agent reaches beyond the model — to search, to compute, to call your APIs. In the last lesson we used tools inside a ReAct loop. Here we focus on writing them well: good schemas, error handling, and access to graph state.
+
+## The @tool decorator
+
+The simplest tool is a decorated function. The **name**, **type hints**, and **docstring** all become part of the schema the model sees.
+
+```python
+from langchain_core.tools import tool
+
+
+@tool
+def search_products(query: str, max_results: int = 5) -> str:
+    """Search the product catalog.
+
+    Args:
+        query: What the user is looking for.
+        max_results: How many results to return (default 5).
+    """
+    results = catalog.search(query, limit=max_results)
+    return "\n".join(r.title for r in results)
+```
+
+<Callout type="tip" title="The docstring is a prompt">
+The model chooses tools based on their names and descriptions. Treat the docstring as prompt engineering: say clearly *what* the tool does and *when* to use it. A vague docstring leads to the tool being called at the wrong time — or not at all.
+</Callout>
+
+## Richer argument schemas
+
+For complex inputs, define an explicit schema with Pydantic and attach it to the tool. This gives you validation and per-field descriptions.
+
+```python
+from pydantic import BaseModel, Field
+from langchain_core.tools import tool
+
+
+class BookFlightInput(BaseModel):
+    destination: str = Field(description="IATA airport code, e.g. 'JFK'")
+    date: str = Field(description="Departure date in YYYY-MM-DD format")
+    passengers: int = Field(default=1, ge=1, le=9, description="Number of passengers")
+
+
+@tool(args_schema=BookFlightInput)
+def book_flight(destination: str, date: str, passengers: int = 1) -> str:
+    """Book a flight to a destination on a given date."""
+    return f"Booked {passengers} seat(s) to {destination} on {date}."
+```
+
+Field constraints (`ge`, `le`) and descriptions guide the model toward valid calls and catch bad inputs early.
+
+## Returning structured results
+
+A tool can return a string, or a richer object. Returning structured data (a dict or list) lets the model reason over fields rather than parsing prose:
+
+```python
+@tool
+def get_stock(symbol: str) -> dict:
+    """Get the latest price and daily change for a stock symbol."""
+    return {"symbol": symbol, "price": 172.35, "change_pct": -0.8}
+```
+
+## Handling errors gracefully
+
+Tools fail — networks time out, inputs are invalid. When a tool raises, you want the agent to *see* the error and adapt, not crash the graph. `ToolNode` handles this for you: by default it catches exceptions and returns them to the model as a `ToolMessage` with an error flag, so the model can retry or choose another approach.
+
+```python
+from langgraph.prebuilt import ToolNode
+
+# handle_tool_errors=True is the default — exceptions become ToolMessages
+tool_node = ToolNode(tools, handle_tool_errors=True)
+```
+
+You can customize the error message the model sees:
+
+```python
+tool_node = ToolNode(
+    tools,
+    handle_tool_errors="The tool failed. Check your arguments and try again.",
+)
+```
+
+Inside a tool, you can also raise a `ToolException` to signal a controlled, model-visible failure rather than an unexpected crash.
+
+<Callout type="warning" title="Validate untrusted input">
+Tool arguments come from the model, which can be steered by user input. Never pass them unchecked into shell commands, SQL, file paths, or `eval`. Validate and sanitize exactly as you would any external input — schemas help, but they are not a security boundary.
+</Callout>
+
+## Accessing graph state and config from a tool
+
+Sometimes a tool needs context beyond its arguments — the current user, a session ID, or other state. LangGraph injects these without exposing them to the model, using `InjectedState` and `RunnableConfig`.
+
+```python
+from typing import Annotated
+from langchain_core.tools import tool
+from langchain_core.runnables import RunnableConfig
+from langgraph.prebuilt import InjectedState
+
+
+@tool
+def get_user_orders(
+    status: str,
+    state: Annotated[dict, InjectedState],
+    config: RunnableConfig,
+) -> str:
+    """List the current user's orders with a given status."""
+    user_id = config["configurable"]["user_id"]
+    return orders_for(user_id, status)
+```
+
+The model only sees the `status` argument — the `state` and `config` parameters are filled in by LangGraph at call time and hidden from the schema. This keeps sensitive identifiers out of the model's reach while still letting tools use them.
+
+## Controlling tool choice
+
+By default the model decides whether and which tool to call. You can constrain that when binding:
+
+```python
+# Force the model to call at least one tool
+llm.bind_tools(tools, tool_choice="any")
+
+# Force a specific tool
+llm.bind_tools(tools, tool_choice="book_flight")
+
+# Let the model decide (default)
+llm.bind_tools(tools, tool_choice="auto")
+```
+
+Forcing a tool is useful for structured-extraction steps where you always want the output in a particular shape.
+
+## Parallel tool calls
+
+Modern models can request several tools in one turn. `ToolNode` runs them and returns all results together, so a single agent step can gather from multiple sources at once. This is on by default; the ReAct loop from the previous lesson already handles it — the tools node simply produces multiple `ToolMessage`s, all appended via the `add_messages` reducer.
+
+## Recap
+
+- The **`@tool`** decorator turns a function into a tool; its **docstring and types** are the schema.
+- Use **Pydantic schemas** for validation and per-field guidance.
+- **`ToolNode`** runs tools, handles parallel calls, and turns errors into model-visible messages.
+- **`InjectedState`** and **`RunnableConfig`** give tools access to state and identifiers without exposing them to the model.
+- **`tool_choice`** lets you force or forbid tool use.
+
+Your agent can now act on the world. Next we make it *remember* — adding **persistence and memory** with checkpointers.

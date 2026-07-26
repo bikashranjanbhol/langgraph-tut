@@ -1,0 +1,162 @@
+---
+title: "Persistence & Memory"
+description: "Give your agents memory with checkpointers. Learn threads, short-term vs long-term memory, resuming conversations, and inspecting or editing state history."
+order: 8
+difficulty: "Intermediate"
+duration: "13 min"
+category: "Memory & Interaction"
+tags: ["persistence", "memory", "checkpointer", "threads", "state"]
+updated: "2026-07-01"
+---
+
+So far every `invoke` has started from scratch. Real applications need **memory** — a conversation that remembers earlier turns, survives a restart, and can be resumed later. LangGraph provides this through **checkpointers**, and it's remarkably little code to add.
+
+## Checkpointers save state after every step
+
+A **checkpointer** persists the graph's state after each super-step. Attach one at compile time and LangGraph automatically saves a snapshot (a *checkpoint*) as execution proceeds. To make a graph stateful, you pass a checkpointer when compiling.
+
+```python
+from langgraph.checkpoint.memory import MemorySaver
+
+memory = MemorySaver()
+graph = builder.compile(checkpointer=memory)
+```
+
+`MemorySaver` keeps checkpoints in RAM — perfect for development and tests. For production you'll use a durable backend (SQLite or Postgres), covered below.
+
+## Threads: separate conversations
+
+A checkpointer organizes state by **thread**. A thread is one continuous conversation, identified by a `thread_id` you pass in the config. Reuse the same `thread_id` to continue a conversation; use a new one to start fresh.
+
+```python
+config = {"configurable": {"thread_id": "user-42"}}
+
+graph.invoke({"messages": [("user", "Hi, my name is Ada.")]}, config)
+# ... later, same thread ...
+result = graph.invoke({"messages": [("user", "What's my name?")]}, config)
+print(result["messages"][-1].content)  # "Your name is Ada."
+```
+
+Because the checkpointer restored the prior messages for `thread-user-42`, the second call has the full history — the model remembers Ada's name. No manual history-passing required.
+
+<Callout type="success" title="This is short-term memory">
+Checkpointing per thread *is* your conversation memory. You send only the new message each turn; LangGraph loads the accumulated state, appends via the `add_messages` reducer, and saves the result. Threads keep users' conversations cleanly separated.
+</Callout>
+
+## Durable checkpointers
+
+Swap `MemorySaver` for a persistent backend and conversations survive restarts. The API is identical — only the checkpointer changes.
+
+```python
+# SQLite — great for a single instance or local app
+from langgraph.checkpoint.sqlite import SqliteSaver
+
+with SqliteSaver.from_conn_string("checkpoints.sqlite") as checkpointer:
+    graph = builder.compile(checkpointer=checkpointer)
+    graph.invoke({"messages": [("user", "Hello")]}, config)
+```
+
+```python
+# Postgres — for production, multiple instances, concurrency
+from langgraph.checkpoint.postgres import PostgresSaver
+
+with PostgresSaver.from_conn_string("postgresql://...") as checkpointer:
+    checkpointer.setup()  # creates tables on first run
+    graph = builder.compile(checkpointer=checkpointer)
+```
+
+Install the extras you need — for example `pip install langgraph-checkpoint-sqlite` or `langgraph-checkpoint-postgres`. Async variants (`AsyncSqliteSaver`, `AsyncPostgresSaver`) exist for async graphs.
+
+## Inspecting state
+
+With a checkpointer attached, you can read the current state of any thread:
+
+```python
+snapshot = graph.get_state(config)
+print(snapshot.values["messages"])   # current state values
+print(snapshot.next)                 # nodes queued to run next (empty if finished)
+```
+
+And you can walk the full history of checkpoints — every step the thread has taken:
+
+```python
+for snapshot in graph.get_state_history(config):
+    print(snapshot.config["configurable"]["checkpoint_id"], "->", snapshot.next)
+```
+
+This history is what powers **time travel**: pick an earlier checkpoint and resume from it to explore an alternative path — a debugging superpower.
+
+## Editing state
+
+You can also *update* a thread's state directly, outside of a node — useful for corrections, injecting context, or building human-in-the-loop flows:
+
+```python
+graph.update_state(config, {"messages": [("user", "Actually, call me Grace.")]})
+```
+
+The update goes through the same reducers as a node's output, so `add_messages` appends it correctly.
+
+## Short-term vs long-term memory
+
+The checkpointer gives you **short-term memory**: everything within a thread. But sometimes you want facts to persist *across* threads — a user's preferences, learned facts, a knowledge base. That's **long-term memory**, and LangGraph provides a separate **store** for it.
+
+```python
+from langgraph.store.memory import InMemoryStore
+
+store = InMemoryStore()
+graph = builder.compile(checkpointer=memory, store=store)
+```
+
+Inside a node you can read and write namespaced key-value memories that outlive any single conversation:
+
+```python
+def remember(state, *, store):
+    user_id = "user-42"
+    namespace = (user_id, "preferences")
+    store.put(namespace, "diet", {"value": "vegetarian"})
+    prefs = store.search(namespace)
+    return {"messages": [...]}
+```
+
+A durable `PostgresStore` mirrors this API for production, and can back memories with vector search for semantic recall.
+
+<Callout type="note" title="Two kinds of memory, two tools">
+Use the **checkpointer** for the state of a single conversation (short-term, thread-scoped). Use the **store** for knowledge that should follow a user across conversations (long-term, cross-thread). Many apps use both.
+</Callout>
+
+## Putting it together
+
+```python
+from langgraph.checkpoint.memory import MemorySaver
+from langgraph.graph import StateGraph, MessagesState, START, END
+from langchain.chat_models import init_chat_model
+
+llm = init_chat_model("anthropic:claude-sonnet-5")
+
+
+def chatbot(state: MessagesState) -> dict:
+    return {"messages": [llm.invoke(state["messages"])]}
+
+
+builder = StateGraph(MessagesState)
+builder.add_node("chatbot", chatbot)
+builder.add_edge(START, "chatbot")
+builder.add_edge("chatbot", END)
+
+graph = builder.compile(checkpointer=MemorySaver())
+
+config = {"configurable": {"thread_id": "demo"}}
+graph.invoke({"messages": [("user", "I love hiking.")]}, config)
+out = graph.invoke({"messages": [("user", "Suggest a weekend plan.")]}, config)
+print(out["messages"][-1].content)  # references hiking — it remembered
+```
+
+## Recap
+
+- A **checkpointer** saves state after each step; attach it at `compile(checkpointer=...)`.
+- **Threads** (`thread_id`) isolate and resume conversations — this is short-term memory.
+- Use `MemorySaver` for dev, **SQLite/Postgres** savers for production.
+- `get_state`, `get_state_history`, and `update_state` let you inspect, replay, and edit state.
+- A **store** provides cross-thread **long-term memory** for user facts and knowledge.
+
+Memory sets up our next topic: pausing a graph mid-run to get a human's input — **human-in-the-loop**.

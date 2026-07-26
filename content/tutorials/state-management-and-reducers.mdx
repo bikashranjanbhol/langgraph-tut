@@ -1,0 +1,175 @@
+---
+title: "State Management & Reducers"
+description: "How state updates are merged in LangGraph. Understand reducers, the add_messages reducer, multiple state channels, and custom reducer functions."
+order: 4
+difficulty: "Intermediate"
+duration: "12 min"
+category: "State & Control Flow"
+tags: ["state", "reducers", "add_messages", "channels", "annotated"]
+updated: "2026-07-01"
+---
+
+The state is the heart of a LangGraph application, and **reducers** are the rules that govern how it changes. Get reducers right and your graph behaves predictably; get them wrong and you'll lose messages or clobber data. This lesson makes the machinery explicit.
+
+## The default behavior: overwrite
+
+When you declare a plain state key, LangGraph **overwrites** it whenever a node returns a value for it.
+
+```python
+from typing_extensions import TypedDict
+from langgraph.graph import StateGraph, START, END
+
+
+class State(TypedDict):
+    value: int
+
+
+def node_a(state: State) -> dict:
+    return {"value": 1}
+
+
+def node_b(state: State) -> dict:
+    return {"value": 2}
+```
+
+If `node_a` runs then `node_b`, the final `value` is `2`. The second write replaces the first. This is the sensible default for scalar data — a status flag, the latest answer, a counter you set outright.
+
+But overwriting is wrong for accumulating data like a message history. If each turn overwrote `messages`, you'd only ever keep the last message. That's what reducers fix.
+
+## What a reducer is
+
+A **reducer** is a function that takes the *current* value and the *update*, and returns the *new* value:
+
+```python
+def reducer(current, update):
+    return combined_value
+```
+
+You attach a reducer to a state key using `Annotated`:
+
+```python
+from typing import Annotated
+import operator
+
+
+class State(TypedDict):
+    # operator.add on a list means "concatenate"
+    events: Annotated[list, operator.add]
+```
+
+Now when a node returns `{"events": ["clicked"]}`, LangGraph calls `operator.add(current_events, ["clicked"])` — appending rather than replacing. Every node's contribution accumulates.
+
+<Callout type="note" title="Overwrite is just a reducer too">
+The default overwrite behavior is equivalent to a reducer of `lambda current, update: update`. Declaring `Annotated[..., some_reducer]` simply swaps in a smarter merge rule.
+</Callout>
+
+## The add_messages reducer
+
+`add_messages` is a specialized reducer for chat histories. It does more than a naive append:
+
+- It **appends** new messages to the list.
+- It **converts** raw tuples/dicts into proper `HumanMessage` / `AIMessage` objects.
+- It **deduplicates and updates** by message ID — if an update carries a message with an existing ID, it replaces that message instead of duplicating it.
+
+```python
+from typing import Annotated
+from typing_extensions import TypedDict
+from langgraph.graph.message import add_messages
+
+
+class State(TypedDict):
+    messages: Annotated[list, add_messages]
+```
+
+That ID-aware behavior is what makes streaming, tool calls, and message edits work cleanly — you can re-emit a message with the same ID to update it in place.
+
+<Callout type="tip" title="A shortcut">
+LangGraph provides a prebuilt `MessagesState` so you don't have to redeclare the messages channel every time:
+
+```python
+from langgraph.graph import MessagesState
+
+class State(MessagesState):
+    # inherits `messages: Annotated[list, add_messages]`
+    user_name: str  # add your own fields alongside
+```
+</Callout>
+
+## Multiple channels
+
+A state can have many keys, each with its own reducer. LangGraph calls these **channels**, and each is merged independently.
+
+```python
+from typing import Annotated
+import operator
+from langgraph.graph.message import add_messages
+from langgraph.graph import MessagesState
+
+
+class State(MessagesState):
+    messages: Annotated[list, add_messages]  # accumulates
+    documents: Annotated[list, operator.add]  # accumulates
+    step_count: int                            # overwrites
+    final_answer: str                          # overwrites
+```
+
+Different data has different merge semantics, and reducers let you express that per-key. A node can update any subset of channels in a single return:
+
+```python
+def research(state: State) -> dict:
+    return {
+        "documents": [new_doc],   # appended via operator.add
+        "step_count": state["step_count"] + 1,  # overwritten
+    }
+```
+
+## Writing a custom reducer
+
+When neither overwrite nor concatenate fits, write your own. A reducer is any function `(current, update) -> new`.
+
+Here's one that keeps a capped, deduplicated set of the most recent items:
+
+```python
+from typing import Annotated
+from typing_extensions import TypedDict
+
+
+def merge_unique_capped(current: list, update: list) -> list:
+    current = current or []
+    combined = current + [x for x in update if x not in current]
+    return combined[-10:]  # keep only the last 10
+
+
+class State(TypedDict):
+    recent_topics: Annotated[list, merge_unique_capped]
+```
+
+Custom reducers are handy for things like merging dictionaries, keeping a running maximum, or maintaining a bounded window of history.
+
+<Callout type="warning" title="Reducers must be pure and total">
+A reducer should be a pure function with no side effects, and it must handle the initial case where `current` is empty or `None` (LangGraph may call it with no prior value). Guard with `current = current or []` or similar.
+</Callout>
+
+## Parallel updates and reducers
+
+Reducers become essential when nodes run **in parallel**. If two branches both write to the same channel in the same step, LangGraph applies the reducer to combine their outputs. With an accumulating reducer like `operator.add`, both contributions are kept:
+
+```python
+class State(TypedDict):
+    results: Annotated[list, operator.add]
+
+# If branch_1 returns {"results": ["a"]} and branch_2 returns {"results": ["b"]}
+# in the same super-step, the merged state has results == ["a", "b"].
+```
+
+Without a reducer on a channel written by parallel branches, LangGraph raises an error rather than silently dropping one write — a helpful guard against subtle bugs.
+
+## Recap
+
+- Every state key has a **merge rule**. The default is overwrite.
+- A **reducer** attached via `Annotated[type, fn]` changes how updates combine.
+- `add_messages` is the ID-aware reducer for chat histories; `operator.add` concatenates lists.
+- Different **channels** can use different reducers, and a node can update several at once.
+- Reducers are what make **parallel** node execution safe.
+
+Next up: **conditional edges** — using the state to decide, at runtime, which node runs next.

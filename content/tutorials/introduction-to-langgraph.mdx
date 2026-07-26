@@ -1,0 +1,95 @@
+---
+title: "Introduction to LangGraph"
+description: "What LangGraph is, the problems it solves, and why graphs are the right abstraction for building reliable, stateful AI agents."
+order: 1
+difficulty: "Beginner"
+duration: "8 min"
+category: "Foundations"
+tags: ["langgraph", "agents", "concepts", "getting-started"]
+updated: "2026-07-01"
+---
+
+LangGraph is a library for building **stateful, multi-actor applications** with large language models (LLMs). It is built by the team behind LangChain, but you can use it entirely on its own. Where a simple chain runs a fixed sequence of steps, LangGraph lets you model your application as a **graph** — a set of nodes connected by edges — that can branch, loop, and maintain state as it runs.
+
+<Callout type="tip" title="Prerequisites">
+You'll get the most from this path if you're comfortable with Python and have used an LLM API before. No prior LangChain experience is required — we introduce everything you need.
+</Callout>
+
+## Why not just use a chain?
+
+A "chain" is a linear pipeline: prompt → model → parse → done. That works beautifully for one-shot tasks like summarizing a document or classifying a support ticket. But real agents need more:
+
+- **Loops.** A research agent should keep searching until it has enough information — an unknown number of steps ahead of time.
+- **Branching.** After the model responds, you might route to a tool, ask a human, or finish, depending on the output.
+- **Memory.** A conversation needs to remember what happened three turns ago, and survive a server restart.
+- **Coordination.** Larger systems have several specialized agents that hand work to one another.
+
+You *can* bolt these onto a linear chain with enough `if` statements and `while` loops, but the control flow quickly becomes tangled and hard to reason about. LangGraph makes these patterns **first-class citizens**.
+
+## The core idea: a graph over shared state
+
+Every LangGraph application has three ingredients:
+
+- **State** — a shared data structure that flows through the graph. Think of it as the application's working memory.
+- **Nodes** — Python functions that read the state, do some work (call a model, run a tool), and return an update to the state.
+- **Edges** — connections that decide which node runs next. Edges can be fixed, or *conditional* (chosen at runtime based on the state).
+
+Execution starts at a special `START` marker, moves from node to node along the edges, and finishes when it reaches `END`. Because edges can point backward, you get loops for free.
+
+```python
+from langgraph.graph import StateGraph, START, END
+from typing_extensions import TypedDict
+
+
+class State(TypedDict):
+    topic: str
+    joke: str
+
+
+def write_joke(state: State) -> dict:
+    # In a real app you'd call an LLM here.
+    return {"joke": f"Why did the {state['topic']} cross the road?"}
+
+
+builder = StateGraph(State)
+builder.add_node("write_joke", write_joke)
+builder.add_edge(START, "write_joke")
+builder.add_edge("write_joke", END)
+
+graph = builder.compile()
+result = graph.invoke({"topic": "chicken"})
+print(result["joke"])
+```
+
+Notice the shape of a node: it takes the current `state` and returns a **partial update** (`{"joke": ...}`). LangGraph merges that update back into the state and moves on. You never mutate the state in place — you describe what changed.
+
+<Callout type="success" title="The mental model">
+LangGraph is a small state machine engine. You describe *what the states are*, *what work each node does*, and *how to move between them*. LangGraph runs the loop, tracks the state, and gives you streaming, persistence, and human-in-the-loop on top — all for free.
+</Callout>
+
+## What you get out of the box
+
+Once your application is a graph, LangGraph layers on capabilities that are painful to build yourself:
+
+- **Persistence** via checkpointers, so a conversation can pause and resume.
+- **Streaming** of tokens, state updates, and events as the graph runs.
+- **Human-in-the-loop** interrupts to pause for approval or edits.
+- **Time travel** to rewind to a previous state and explore alternatives.
+- **A studio and platform** for visualizing, debugging, and deploying graphs.
+
+## Python or JavaScript?
+
+LangGraph has both a Python and a JavaScript/TypeScript implementation with very similar APIs. This tutorial series uses **Python**, but the concepts — state, nodes, edges, conditional routing — translate directly. If you're a JS developer, you'll feel at home.
+
+## Where this path goes
+
+Over the next lessons you'll build up from a single-node graph to a full multi-agent system:
+
+1. The core concepts — **state, nodes, and edges** — in depth.
+2. Your **first `StateGraph`** with a real language model.
+3. **State management** with reducers and message history.
+4. **Conditional edges** for dynamic routing.
+5. A complete **ReAct agent** that reasons and acts.
+6. **Tools**, **persistence**, **human-in-the-loop**, **streaming**, and finally **multi-agent systems**.
+
+Ready? Let's dig into the core concepts.

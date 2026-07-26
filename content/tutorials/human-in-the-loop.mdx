@@ -1,0 +1,145 @@
+---
+title: "Human-in-the-Loop"
+description: "Pause a graph to get human approval, edits, or input, then resume exactly where it left off — using the interrupt function and the Command primitive."
+order: 9
+difficulty: "Advanced"
+duration: "12 min"
+category: "Memory & Interaction"
+tags: ["human-in-the-loop", "interrupt", "approval", "command", "resume"]
+updated: "2026-07-01"
+---
+
+Autonomous agents are powerful, but many real workflows need a human in the loop — to approve a risky action, correct a plan, or supply information the agent lacks. LangGraph makes this a first-class feature: a graph can **pause**, surface a request to a human, and later **resume** from the exact point it stopped.
+
+<Callout type="note" title="Persistence is required">
+Human-in-the-loop relies on the checkpointer from the previous lesson. To pause and resume, the graph must be able to save its state — so compile with a checkpointer and always run with a `thread_id`.
+</Callout>
+
+## The interrupt function
+
+The modern way to pause is the `interrupt` function. Call it inside a node with a payload for the human; execution stops and that payload is surfaced to the caller. When you resume, `interrupt` *returns* the value the human provided, and the node continues.
+
+```python
+from langgraph.types import interrupt
+
+
+def review_step(state: State) -> dict:
+    # Pause and ask a human to review the draft.
+    decision = interrupt({
+        "action": "review",
+        "draft": state["draft"],
+    })
+    # Execution resumes here with the human's response.
+    return {"approved": decision == "approve"}
+```
+
+The dictionary you pass to `interrupt` is what your application shows the user. Whatever the user sends back becomes `interrupt`'s return value.
+
+## Resuming with Command
+
+To resume, invoke the graph again on the same thread, passing a `Command(resume=...)`. The value you supply is exactly what the paused `interrupt` call returns.
+
+```python
+from langgraph.types import Command
+
+config = {"configurable": {"thread_id": "review-1"}}
+
+# First run — proceeds until it hits interrupt(), then pauses.
+result = graph.invoke({"draft": "Dear customer, ..."}, config)
+print(result["__interrupt__"])  # the payload you passed to interrupt()
+
+# ... show it to a human, collect their decision ...
+
+# Resume with the human's answer.
+final = graph.invoke(Command(resume="approve"), config)
+print(final["approved"])  # True
+```
+
+The graph doesn't restart — the checkpointer restores its state, and the paused node picks up right where `interrupt` left off.
+
+## Pattern: approve or reject an action
+
+A common use is gating a consequential tool call — sending an email, issuing a refund, deploying code. Interrupt *before* the action and act only on approval.
+
+```python
+from langgraph.types import interrupt, Command
+
+
+def execute_action(state: State) -> dict:
+    approval = interrupt({
+        "question": "Approve this action?",
+        "action": state["proposed_action"],
+    })
+    if approval == "approve":
+        result = perform(state["proposed_action"])
+        return {"messages": [("assistant", f"Done: {result}")]}
+    return {"messages": [("assistant", "Action cancelled by reviewer.")]}
+```
+
+## Pattern: edit the agent's proposal
+
+Instead of a yes/no, the human can send back corrected content, which the node then uses:
+
+```python
+def draft_reply(state: State) -> dict:
+    draft = llm.invoke(state["messages"]).content
+    edited = interrupt({"draft": draft, "instructions": "Edit as needed, then submit."})
+    return {"messages": [("assistant", edited)]}
+```
+
+Resume with the edited text: `graph.invoke(Command(resume="...edited draft..."), config)`.
+
+## Pattern: ask the human for missing input
+
+An agent that hits a gap can pause to ask, then continue with the answer:
+
+```python
+def collect_info(state: State) -> dict:
+    if not state.get("account_id"):
+        account_id = interrupt("Please provide the customer's account ID.")
+        return {"account_id": account_id}
+    return {}
+```
+
+## Static interrupts at compile time
+
+Besides the dynamic `interrupt` function, you can declare **static** breakpoints when compiling — pause automatically before or after specific nodes. This is handy for debugging or for always-on approval gates.
+
+```python
+graph = builder.compile(
+    checkpointer=checkpointer,
+    interrupt_before=["tools"],   # pause before every tool execution
+    # interrupt_after=["agent"],  # or pause after a node
+)
+```
+
+When paused at a static breakpoint, inspect the state with `graph.get_state(config)`, optionally edit it with `graph.update_state(...)`, then resume by invoking with `None` as the input:
+
+```python
+graph.invoke(None, config)  # continue from the breakpoint
+```
+
+<Callout type="tip" title="Dynamic vs static">
+Use the **`interrupt` function** when the pause is part of your logic and you need a value back from the human — approvals, edits, missing input. Use **static `interrupt_before`/`interrupt_after`** for debugging or blanket gates where you just want to stop, look, and continue.
+</Callout>
+
+## Inspecting and editing while paused
+
+Because the graph is checkpointed, a pause is a perfect moment to inspect or adjust state — the same `get_state` / `update_state` tools from the persistence lesson apply. You might correct a tool argument before letting execution proceed:
+
+```python
+snapshot = graph.get_state(config)
+# ...review snapshot.values, then fix something...
+graph.update_state(config, {"proposed_action": corrected_action})
+graph.invoke(None, config)  # resume with the correction applied
+```
+
+## Recap
+
+- Human-in-the-loop lets a graph **pause, surface a request, and resume** — built on the checkpointer.
+- The **`interrupt`** function pauses a node and returns the human's response on resume.
+- Resume by invoking with **`Command(resume=value)`** on the same `thread_id`.
+- Common patterns: **approve/reject**, **edit a proposal**, **ask for input**.
+- **Static breakpoints** (`interrupt_before` / `interrupt_after`) pause around nodes for debugging or gating; resume with `invoke(None, config)`.
+
+Next, we make agents feel responsive with **streaming** — surfacing tokens and updates as the graph runs.

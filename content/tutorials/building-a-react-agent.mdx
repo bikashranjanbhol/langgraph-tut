@@ -1,0 +1,167 @@
+---
+title: "Building a ReAct Agent"
+description: "Assemble a full ReAct agent from scratch — reason, act, observe, repeat — then see how the prebuilt create_react_agent gives you the same loop in one line."
+order: 6
+difficulty: "Intermediate"
+duration: "14 min"
+category: "Building Agents"
+tags: ["react", "agent", "tools", "tool-calling", "create_react_agent"]
+updated: "2026-07-01"
+---
+
+The **ReAct** pattern — *Reason + Act* — is the workhorse of modern agents. The model reasons about a task, decides to call a tool, observes the result, and repeats until it can answer. In this lesson you'll build a ReAct agent by hand so you understand every edge, then meet the one-line prebuilt version.
+
+## The ReAct loop
+
+At its core, ReAct is a loop between two nodes:
+
+1. **Agent (model)** — looks at the conversation and either calls a tool or produces a final answer.
+2. **Tools** — executes any tool the model requested and returns the result.
+
+A conditional edge decides which way to go: if the model requested a tool, run the tools node and loop back; otherwise, finish.
+
+```
+START → agent → (tool calls?) → tools → agent → ... → END
+```
+
+## Step 1: Define tools
+
+A tool is a Python function with a docstring and type hints. The `@tool` decorator turns it into something the model can call. The docstring is critical — it's how the model knows what the tool does and when to use it.
+
+```python
+from langchain_core.tools import tool
+
+
+@tool
+def get_weather(city: str) -> str:
+    """Get the current weather for a given city."""
+    # A real implementation would call a weather API.
+    return f"It's 72°F and sunny in {city}."
+
+
+@tool
+def calculator(expression: str) -> str:
+    """Evaluate a basic arithmetic expression, e.g. '2 + 2 * 3'."""
+    return str(eval(expression))  # eval is for demo only — sanitize in production
+
+
+tools = [get_weather, calculator]
+```
+
+## Step 2: Bind tools to the model
+
+Tell the model which tools exist by binding them. This adds the tool schemas to every request so the model can emit structured tool calls.
+
+```python
+from langchain.chat_models import init_chat_model
+
+llm = init_chat_model("anthropic:claude-sonnet-5")
+llm_with_tools = llm.bind_tools(tools)
+```
+
+## Step 3: The agent node
+
+The agent node calls the tool-aware model. Its response is an `AIMessage` that may contain `tool_calls`.
+
+```python
+from langgraph.graph import MessagesState
+
+
+def agent(state: MessagesState) -> dict:
+    return {"messages": [llm_with_tools.invoke(state["messages"])]}
+```
+
+We reuse `MessagesState`, which gives us the `messages` channel with the `add_messages` reducer for free.
+
+## Step 4: The tools node
+
+LangGraph provides a prebuilt `ToolNode` that reads the latest message's `tool_calls`, runs the matching tools, and returns their results as `ToolMessage`s. No need to write the dispatch yourself.
+
+```python
+from langgraph.prebuilt import ToolNode
+
+tool_node = ToolNode(tools)
+```
+
+## Step 5: The routing function
+
+After the agent runs, we check whether it asked for a tool. If the last message has `tool_calls`, route to the tools node; otherwise, end. LangGraph ships `tools_condition` that does exactly this, but here it is written out so you can see the logic:
+
+```python
+from langgraph.graph import END
+
+
+def should_continue(state: MessagesState) -> str:
+    last_message = state["messages"][-1]
+    if last_message.tool_calls:
+        return "tools"
+    return END
+```
+
+## Step 6: Wire the graph
+
+Now assemble the loop. The key edge is `tools → agent`, which sends tool results back to the model to continue reasoning.
+
+```python
+from langgraph.graph import StateGraph, START
+
+builder = StateGraph(MessagesState)
+builder.add_node("agent", agent)
+builder.add_node("tools", tool_node)
+
+builder.add_edge(START, "agent")
+builder.add_conditional_edges("agent", should_continue, {"tools": "tools", END: END})
+builder.add_edge("tools", "agent")  # loop back after running tools
+
+graph = builder.compile()
+```
+
+## Step 7: Run it
+
+```python
+result = graph.invoke(
+    {"messages": [("user", "What's the weather in Paris, and what is 15 * 24?")]}
+)
+for message in result["messages"]:
+    message.pretty_print()
+```
+
+You'll see the model call `get_weather`, then `calculator`, observe both results, and produce a final answer that combines them — the ReAct loop in action.
+
+<Callout type="success" title="What just happened">
+The model didn't answer in one shot. It reasoned ("I need the weather and a calculation"), acted (called two tools), observed the results, and only then answered. That reason–act–observe cycle, driven by the `tools → agent` back-edge, is the whole idea.
+</Callout>
+
+## The one-line version
+
+Building the loop by hand is the best way to understand it — but in practice you'll often reach for the prebuilt `create_react_agent`, which constructs exactly this graph for you:
+
+```python
+from langgraph.prebuilt import create_react_agent
+
+agent = create_react_agent(
+    model="anthropic:claude-sonnet-5",
+    tools=tools,
+    prompt="You are a helpful assistant. Use tools when they help.",
+)
+
+result = agent.invoke(
+    {"messages": [("user", "What's the weather in Tokyo?")]}
+)
+print(result["messages"][-1].content)
+```
+
+`create_react_agent` returns a compiled graph with the same agent/tools loop, plus sensible defaults. Because it's just a graph, you can still stream it, add a checkpointer for memory, and attach human-in-the-loop interrupts — all covered in later lessons.
+
+<Callout type="note" title="When to build by hand">
+Reach for `create_react_agent` for standard tool-calling agents. Build the graph yourself when you need custom nodes in the loop (a validation step, a guardrail, a summarizer), non-standard routing, or multiple cooperating agents. Both produce ordinary LangGraph graphs — you can start with the prebuilt and graduate to a custom graph without rewriting everything.
+</Callout>
+
+## Recap
+
+- **ReAct** loops between an **agent** node (reason) and a **tools** node (act).
+- A **conditional edge** checks for `tool_calls` and either runs tools or ends.
+- The **`tools → agent`** back-edge feeds results back for continued reasoning.
+- `ToolNode` and `tools_condition` are prebuilt helpers; `create_react_agent` assembles the whole loop in one call.
+
+Next, we go deeper on **tools and tool calling** — writing robust tools, handling errors, and controlling how the model uses them.

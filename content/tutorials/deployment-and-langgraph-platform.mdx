@@ -1,0 +1,171 @@
+---
+title: "Deployment & the LangGraph Platform"
+description: "Take your graph to production. Project structure with langgraph.json, running the dev server, deployment options, the Assistants API, and observability with LangSmith."
+order: 12
+difficulty: "Advanced"
+duration: "12 min"
+category: "Advanced Patterns"
+tags: ["deployment", "langgraph-platform", "production", "langsmith", "assistants"]
+updated: "2026-07-01"
+---
+
+You've built stateful, tool-using, multi-agent graphs. The final step is running them in production — with durable persistence, an API, background execution, and observability. This lesson covers deploying LangGraph, from a local dev server to the managed platform.
+
+## What deployment adds
+
+Your compiled graph runs fine in a script, but a production deployment provides infrastructure you'd otherwise build yourself:
+
+- A **REST API** to invoke graphs, stream results, and manage threads.
+- **Durable persistence** for checkpoints and long-term memory, backed by Postgres.
+- **Background runs** and a task queue for long-running agents.
+- **Horizontal scaling** and concurrency handling.
+- **Human-in-the-loop** endpoints for pausing and resuming.
+- A **studio** UI for visualizing and debugging graphs.
+
+## Project structure
+
+A deployable LangGraph app is a normal Python project plus a `langgraph.json` config file that tells the platform where your graphs live.
+
+```
+my-agent/
+├── langgraph.json
+├── pyproject.toml        # or requirements.txt
+├── .env                  # API keys (never commit real secrets)
+└── src/
+    └── agent/
+        └── graph.py      # defines a compiled `graph`
+```
+
+The `langgraph.json` points at your compiled graph(s) by path, and lists dependencies and the env file:
+
+```json
+{
+  "dependencies": ["."],
+  "graphs": {
+    "agent": "./src/agent/graph.py:graph"
+  },
+  "env": ".env"
+}
+```
+
+The value `"./src/agent/graph.py:graph"` means "the `graph` variable in that module." You can expose several graphs by adding more entries.
+
+<Callout type="warning" title="Don't pass your own checkpointer">
+When deploying to the platform, **do not** attach a `MemorySaver` or other checkpointer in your code — the platform provides a production Postgres checkpointer automatically. Compile the graph without one; the deployment wires persistence in for you. (For self-hosted runs where you manage everything, you supply the checkpointer yourself.)
+</Callout>
+
+## Run it locally
+
+Install the CLI and start the in-memory dev server. It gives you the full API and the studio without any infrastructure.
+
+```bash
+pip install -U "langgraph-cli[inmem]"
+langgraph dev
+```
+
+This launches a local server (with hot reload) and prints URLs for the API and the LangGraph Studio, where you can run your graph, watch state flow through nodes, set breakpoints, and time-travel through checkpoints. It's the fastest way to iterate.
+
+## Calling a deployment
+
+Once running (locally or deployed), interact with your graph over the API using the LangGraph SDK. The SDK mirrors the concepts you already know — threads, runs, streaming.
+
+```python
+from langgraph_sdk import get_client
+
+client = get_client(url="http://localhost:2024")
+
+# Create a thread (persistent conversation)
+thread = await client.threads.create()
+
+# Stream a run on that thread
+async for chunk in client.runs.stream(
+    thread["thread_id"],
+    assistant_id="agent",
+    input={"messages": [{"role": "user", "content": "Hello!"}]},
+    stream_mode="messages",
+):
+    print(chunk.data)
+```
+
+Threads created through the API are checkpointed automatically, so conversations resume across requests — exactly like the persistence lesson, now managed for you. A JavaScript/TypeScript SDK offers the same API.
+
+## Assistants: configurable versions of a graph
+
+The platform introduces **assistants** — named, versioned configurations of a graph. The same underlying graph can back many assistants that differ by prompt, model, or other config values, without changing code.
+
+```python
+assistant = await client.assistants.create(
+    graph_id="agent",
+    config={"configurable": {"model": "anthropic:claude-opus-5", "temperature": 0}},
+    name="Careful Assistant",
+)
+```
+
+This lets non-engineers tune behavior, and lets you A/B different configurations against the same graph. To make a graph configurable, read values from `config["configurable"]` in your nodes.
+
+## Deployment options
+
+LangGraph graphs can run in several environments:
+
+- **Local dev server** (`langgraph dev`) — for building and debugging.
+- **Self-hosted** — build a Docker image with `langgraph build` and run it on your own infrastructure with a Postgres and Redis you provide.
+- **Cloud (managed)** — deploy from a GitHub repo through LangSmith; the platform handles scaling, persistence, and monitoring.
+
+Because it's the same graph everywhere, you develop locally and promote the identical code to production.
+
+```bash
+# Build a production Docker image from your project
+langgraph build -t my-agent
+
+# Or generate a Dockerfile to customize
+langgraph dockerfile > Dockerfile
+```
+
+## Observability with LangSmith
+
+Agents are non-deterministic, so **tracing** is essential in production. LangSmith captures every model call, tool invocation, and state transition, so you can see exactly what an agent did, debug failures, measure latency and cost, and run evaluations.
+
+Enable it with environment variables — no code changes required:
+
+```bash
+export LANGSMITH_TRACING="true"
+export LANGSMITH_API_KEY="lsv2_..."
+```
+
+With tracing on, every graph run appears in LangSmith as a nested trace you can drill into. Pair it with datasets and evaluators to catch regressions before they ship.
+
+<Callout type="tip" title="Trace from day one">
+Turn on LangSmith tracing while you're still building locally, not just in production. Seeing the full sequence of model and tool calls makes debugging agent behavior dramatically faster — it's the single most useful habit for LangGraph development.
+</Callout>
+
+## Production checklist
+
+Before you ship, make sure you've covered:
+
+- **Durable persistence** — Postgres checkpointer (provided by the platform, or configured yourself when self-hosting).
+- **Error handling** — tools return model-visible errors; nodes handle exceptions gracefully.
+- **Loop guards** — every loop has a termination condition and a sensible `recursion_limit`.
+- **Human-in-the-loop** on consequential actions.
+- **Secrets** in environment variables, never in code or version control.
+- **Tracing** enabled via LangSmith.
+- **Streaming** wired to your UI for responsiveness.
+
+## Recap
+
+- Deployments add a **REST API, durable persistence, background runs, scaling, and a studio**.
+- Describe your app with **`langgraph.json`**; run locally with **`langgraph dev`**.
+- Interact via the **LangGraph SDK** using threads and runs — the persistence model you already know.
+- **Assistants** are versioned, configurable instances of a graph.
+- Deploy **self-hosted** or on the **managed cloud**; use **LangSmith** for tracing and evaluation.
+
+## You've finished the path 🎉
+
+From a single node to a deployed multi-agent system, you now have the complete mental model for building with LangGraph: **state** flowing through **nodes**, wired by **edges**, made durable by **checkpointers**, and supervised by **humans** when it matters.
+
+Where to go next:
+
+- Rebuild one of your own ideas as a LangGraph — a research assistant, a coding agent, a customer-support router.
+- Explore the [official documentation]( https://langchain-ai.github.io/langgraph/ ) for deep dives and API reference.
+- Read real graphs in the LangGraph examples repository to see these patterns at production scale.
+
+Happy building.
