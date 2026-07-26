@@ -1,0 +1,110 @@
+---
+updated: "2026-07-26"
+---
+
+Before we write a single line of LangGraph, we need to be clear about what we're actually building. This chapter answers the foundational questions: what *is* an AI agent, how does it differ from an ordinary LLM application, and why do we need a framework to orchestrate one at all? Everything else in this course builds on these ideas.
+
+## 1.1 What is an AI agent?
+
+An **AI agent** is a system that uses a language model to decide *what to do next* in pursuit of a goal — repeatedly, until the goal is met. The key word is *decide*. A plain program follows steps you wrote in advance. An agent is handed a goal and works out the steps itself, choosing actions, running them, looking at the results, and adjusting.
+
+That behaviour comes from a simple cycle that runs over and over:
+
+<AgentLoop />
+
+Notice what makes this an *agent* rather than a script: at the **Reason** step, the model — not the developer — chooses the next action, and the loop can run a different number of times for different inputs. A well-defined task might finish in one pass; a hard one might loop a dozen times.
+
+<Callout type="success" title="The one-sentence definition">
+An AI agent is an LLM running in a loop, using tools and memory to take actions toward a goal, deciding for itself when it's done.
+</Callout>
+
+## 1.2 LLM applications versus agentic applications
+
+Most software that uses an LLM is *not* agentic, and that's perfectly fine. An **LLM application** sends input to a model and uses the response — one pass, no decisions about control flow. Summarizing an article, classifying a support ticket, or extracting fields from a document all fit this shape.
+
+An **agentic application** hands the model a goal and lets it drive: it can call tools, consult memory, observe results, and loop. The control flow is decided at run time by the model rather than fixed in advance by you.
+
+<LlmVsAgent />
+
+The distinction matters because it changes how you design, test, and reason about the system. A single LLM call is easy to predict and cheap to verify. An agent is more capable but less predictable — which is exactly why the rest of this course exists.
+
+<Callout type="tip" title="Start simple">
+Reach for an agent only when the task genuinely needs one. If a single call or a fixed sequence of calls does the job, that's almost always the better choice — simpler, cheaper, and easier to trust.
+</Callout>
+
+## 1.3 Workflows versus autonomous agents
+
+"Agent" isn't a binary. There's a spectrum between a fully **predefined workflow** — where you wire up every step — and a fully **autonomous agent** — where the model makes most of the decisions. Understanding where a system sits on this spectrum tells you how much control you're handing over.
+
+<AutonomySpectrum />
+
+- A **workflow** has a control flow you design and can read off the page. It's predictable and easy to debug, but it can only do what you anticipated.
+- An **autonomous agent** decides its own path. It handles open-ended tasks and surprises, but it's harder to predict and needs guardrails.
+
+Most production systems live in the middle, and LangGraph is deliberately built to span the whole range: you can pin down the parts that must be reliable and let the model improvise where flexibility pays off.
+
+## 1.4 Deterministic and non-deterministic behaviour
+
+Traditional software is **deterministic**: the same input produces the same output every time. Language models are **non-deterministic** — ask the same question twice and you may get differently worded (and occasionally different) answers. Try it:
+
+<DeterminismDemo />
+
+This isn't a bug; it's the nature of the technology, and it has real consequences for how you build agents:
+
+- **You can't test with exact-match assertions** the way you would a pure function. You test behaviour and quality instead — a topic we cover in depth later.
+- **The same agent can take different paths** on identical inputs, so logging and tracing become essential.
+- **Guardrails matter.** Structured outputs, validation, retries, and human review turn an unpredictable model into a dependable system.
+
+<Callout type="note" title="You can reduce, not eliminate">
+Lowering a model's temperature or constraining its output makes it *more* consistent, but never perfectly deterministic. Design assuming variation rather than trying to engineer it away.
+</Callout>
+
+## 1.5 Why agents require orchestration
+
+An agent is never *just* a model. To do useful work it has to combine several moving parts — reasoning, tools, memory, control flow, and often a human — and something has to coordinate them reliably. That coordination is **orchestration**.
+
+<OrchestrationDiagram />
+
+Without an orchestration layer you end up hand-writing the glue: a loop here, a bunch of `if` statements there, ad-hoc code to remember previous turns, retries scattered throughout, and no clean way to pause for approval or recover from a crash. It works for a demo and collapses under a real application.
+
+An orchestration framework gives you these as first-class features:
+
+- **Control flow** — loops, branches, and parallelism that you can see and reason about.
+- **State** — a well-defined place for the agent's working memory to live and flow.
+- **Persistence** — the ability to pause, resume, and survive restarts.
+- **Human-in-the-loop** — pausing for approval or input, then continuing.
+- **Streaming and observability** — seeing what the agent is doing as it does it.
+
+This is precisely what LangGraph provides, and it's the subject of the next chapter.
+
+## 1.6 Common agent use cases
+
+Agents shine when a task is **multi-step**, **hard to fully specify in advance**, and **valuable enough** to justify the extra complexity. A few patterns show up again and again:
+
+<UseCaseGrid />
+
+Beyond these, agents power data-analysis copilots, document-review pipelines, IT service desks, and back-office automation. The common thread: the task requires *reasoning across several steps and tools*, not a single lookup or transformation.
+
+<Callout type="tip" title="A quick litmus test">
+If you can write the exact steps in advance and they never change, you probably want a workflow, not an agent. If the right steps depend on what the model discovers along the way, an agent earns its keep.
+</Callout>
+
+## 1.7 Limitations and risks of AI agents
+
+Agents are powerful, but they are not magic, and treating them as infallible is how projects fail. Go in clear-eyed about the trade-offs.
+
+<Callout type="warning" title="Reliability and hallucination">
+Agents can be confidently wrong — inventing facts, mis-reading tool output, or taking a plausible-but-incorrect action. More autonomy means more room for compounding mistakes across a long loop.
+</Callout>
+
+- **Cost and latency.** Each loop iteration is one or more model calls. An agent that takes ten steps costs and waits roughly ten times as much as a single call.
+- **Non-determinism.** As we saw, the same input can produce different behaviour, which complicates testing and reproducibility.
+- **Runaway loops.** Without a stopping condition, an agent can loop indefinitely or thrash between actions — so limits and guardrails are mandatory.
+- **Security.** An agent that can act in the world (send email, run code, hit APIs) can be steered by malicious input via prompt injection. Least-privilege tools and human approval for consequential actions are essential.
+- **Over-engineering.** The most common mistake is building an agent for a job a simple workflow would do better.
+
+<Callout type="success" title="The takeaway">
+Use agents where their flexibility genuinely helps, and wrap them in the right controls — orchestration, guardrails, human oversight, and evaluation. That combination is what this course teaches, and LangGraph is the tool that makes it practical.
+</Callout>
+
+You now have the mental model for what agents are and when to use them. Next, we look at **LangGraph** itself — what it is, when to reach for it, and how graph-based orchestration works.

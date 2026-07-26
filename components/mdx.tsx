@@ -2,6 +2,14 @@ import Link from "next/link";
 import type { MDXComponents } from "mdx/types";
 import { AlertTriangle, Info, Lightbulb, CheckCircle2 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import {
+  AgentLoop,
+  AutonomySpectrum,
+  DeterminismDemo,
+  LlmVsAgent,
+  OrchestrationDiagram,
+  UseCaseGrid,
+} from "@/components/diagrams";
 
 type CalloutType = "note" | "tip" | "warning" | "success";
 
@@ -94,4 +102,10 @@ export const mdxComponents: MDXComponents = {
     );
   },
   Callout,
+  AgentLoop,
+  AutonomySpectrum,
+  DeterminismDemo,
+  LlmVsAgent,
+  OrchestrationDiagram,
+  UseCaseGrid,
 };
