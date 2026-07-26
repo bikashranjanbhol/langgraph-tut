@@ -2,13 +2,19 @@
 
 import { useEffect, useState } from "react";
 import {
+  Activity,
   ArrowRight,
+  Blocks,
   Bot,
   Brain,
+  Check,
+  Cloud,
+  Code2,
   Database,
   Dices,
   Eye,
   GitBranch,
+  LayoutDashboard,
   LifeBuoy,
   Play,
   RefreshCw,
@@ -16,7 +22,9 @@ import {
   ShoppingCart,
   SlidersHorizontal,
   Sparkles,
+  Terminal,
   UserCheck,
+  Workflow,
   Wrench,
   Zap,
 } from "lucide-react";
@@ -569,5 +577,443 @@ export function UseCaseGrid() {
         );
       })}
     </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* 7. GraphAnatomy — click the parts of a StateGraph to learn them     */
+/* ------------------------------------------------------------------ */
+
+const GA_LEGEND = [
+  {
+    key: "state",
+    label: "State",
+    ids: ["start", "agent", "tools", "end", "e_start", "e_tool", "e_end", "e_loop"],
+    desc: "State is the shared data that flows through the graph. Every node reads it and returns an update to it — it's the agent's working memory.",
+  },
+  {
+    key: "start-end",
+    label: "START / END",
+    ids: ["start", "end"],
+    desc: "START is where execution begins and END is where it stops. Every run travels from START to END.",
+  },
+  {
+    key: "node",
+    label: "Node",
+    ids: ["agent", "tools"],
+    desc: "A node is a unit of work — usually a function that reads the state, does something (call the model, run a tool), and returns an update.",
+  },
+  {
+    key: "edge",
+    label: "Edge",
+    ids: ["e_start"],
+    desc: "An edge connects one node to the next, defining the order of execution.",
+  },
+  {
+    key: "conditional",
+    label: "Conditional edge",
+    ids: ["e_tool", "e_end"],
+    desc: "A conditional edge chooses the next node at run time from the state. Here the agent decides whether to call a tool or finish — this is how a graph branches.",
+  },
+  {
+    key: "loop",
+    label: "Loop",
+    ids: ["e_loop"],
+    desc: "Edges can point backwards to form loops. After a tool runs, control returns to the agent to reason again — the core of an agent.",
+  },
+] as const;
+
+export function GraphAnatomy() {
+  const [sel, setSel] = useState<string>("node");
+  const active = GA_LEGEND.find((l) => l.key === sel) ?? GA_LEGEND[2];
+  const on = (id: string) => (active.ids as readonly string[]).includes(id);
+  const st = (id: string) => ({
+    opacity: on(id) ? 1 : 0.22,
+    transition: "opacity .3s ease",
+  });
+
+  return (
+    <figure className="not-prose my-8 rounded-2xl border border-ink-200/70 bg-[rgb(var(--bg-subtle))] p-5 dark:border-ink-800/70 sm:p-6">
+      <span className="mb-2 inline-flex items-center gap-2 text-sm font-semibold text-ink-900 dark:text-white">
+        <Workflow className="h-4 w-4 text-brand-500" />
+        Anatomy of a StateGraph
+      </span>
+
+      <div className="overflow-x-auto">
+        <svg
+          viewBox="0 0 640 300"
+          className="mx-auto h-auto w-full min-w-[440px] max-w-2xl"
+          role="img"
+          aria-label="A LangGraph state graph: START to agent, a conditional edge to tools or END, and a loop from tools back to agent."
+        >
+          <defs>
+            <linearGradient id="ga-grad" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0%" stopColor="#34d39e" />
+              <stop offset="100%" stopColor="#059669" />
+            </linearGradient>
+            <marker
+              id="ga-arrow"
+              viewBox="0 0 10 10"
+              refX="8"
+              refY="5"
+              markerWidth="6"
+              markerHeight="6"
+              orient="auto-start-reverse"
+            >
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="#059669" />
+            </marker>
+          </defs>
+
+          {/* edges */}
+          <g style={st("e_start")}>
+            <line
+              x1="320" y1="60" x2="320" y2="106"
+              stroke="url(#ga-grad)" strokeWidth={on("e_start") ? 3 : 2}
+              markerEnd="url(#ga-arrow)"
+            />
+          </g>
+          <g style={st("e_tool")}>
+            <line
+              x1="292" y1="152" x2="214" y2="206"
+              stroke="url(#ga-grad)" strokeWidth={on("e_tool") ? 3 : 2}
+              strokeDasharray="5 5" markerEnd="url(#ga-arrow)"
+            />
+            <text x="214" y="184" textAnchor="middle" fontSize="11"
+              className="fill-ink-500 dark:fill-ink-400" fontFamily="var(--font-mono)">
+              needs tool
+            </text>
+          </g>
+          <g style={st("e_end")}>
+            <line
+              x1="348" y1="152" x2="424" y2="206"
+              stroke="url(#ga-grad)" strokeWidth={on("e_end") ? 3 : 2}
+              strokeDasharray="5 5" markerEnd="url(#ga-arrow)"
+            />
+            <text x="426" y="184" textAnchor="middle" fontSize="11"
+              className="fill-ink-500 dark:fill-ink-400" fontFamily="var(--font-mono)">
+              done
+            </text>
+          </g>
+          <g style={st("e_loop")}>
+            <path
+              d="M 140 224 C 44 206, 66 118, 260 132"
+              fill="none" stroke="url(#ga-grad)" strokeWidth={on("e_loop") ? 3 : 2}
+              markerEnd="url(#ga-arrow)"
+            />
+          </g>
+
+          {/* START */}
+          <g style={st("start")}>
+            <rect x="281" y="28" width="78" height="32" rx="16"
+              className="fill-white dark:fill-ink-900" stroke="#059669" strokeWidth="1.5" />
+            <text x="320" y="48" textAnchor="middle" fontSize="12" fontWeight="700"
+              className="fill-brand-600 dark:fill-brand-300" fontFamily="var(--font-mono)">
+              START
+            </text>
+          </g>
+
+          {/* agent node */}
+          <g style={st("agent")}>
+            <rect x="262" y="108" width="116" height="44" rx="12"
+              className="fill-white dark:fill-ink-900" stroke="url(#ga-grad)" strokeWidth="2" />
+            <text x="320" y="135" textAnchor="middle" fontSize="14" fontWeight="600"
+              className="fill-ink-800 dark:fill-ink-100" fontFamily="var(--font-mono)">
+              agent
+            </text>
+          </g>
+
+          {/* tools node */}
+          <g style={st("tools")}>
+            <rect x="140" y="208" width="112" height="44" rx="12"
+              className="fill-white dark:fill-ink-900" stroke="url(#ga-grad)" strokeWidth="2" />
+            <text x="196" y="235" textAnchor="middle" fontSize="14" fontWeight="600"
+              className="fill-ink-800 dark:fill-ink-100" fontFamily="var(--font-mono)">
+              tools
+            </text>
+          </g>
+
+          {/* END */}
+          <g style={st("end")}>
+            <rect x="402" y="210" width="84" height="32" rx="16"
+              className="fill-white dark:fill-ink-900" stroke="#059669" strokeWidth="1.5" />
+            <text x="444" y="230" textAnchor="middle" fontSize="12" fontWeight="700"
+              className="fill-brand-600 dark:fill-brand-300" fontFamily="var(--font-mono)">
+              END
+            </text>
+          </g>
+        </svg>
+      </div>
+
+      {/* legend */}
+      <div className="mt-4 flex flex-wrap gap-2">
+        {GA_LEGEND.map((l) => (
+          <button
+            key={l.key}
+            type="button"
+            onClick={() => setSel(l.key)}
+            className={cn(
+              "rounded-lg border px-3 py-1.5 text-xs font-medium transition-all",
+              sel === l.key
+                ? "border-brand-400/70 bg-brand-500/10 text-brand-700 dark:text-brand-200"
+                : "border-ink-200/70 bg-white/60 text-ink-500 hover:border-brand-400/40 dark:border-ink-800/70 dark:bg-ink-900/40 dark:text-ink-400"
+            )}
+          >
+            {l.label}
+          </button>
+        ))}
+      </div>
+
+      <div
+        key={sel}
+        className="mt-4 animate-fade-up rounded-xl border border-brand-400/20 bg-brand-500/5 p-4 dark:bg-brand-500/10"
+      >
+        <p className="text-sm leading-relaxed text-ink-700 dark:text-ink-200">
+          <span className="font-semibold text-ink-900 dark:text-white">
+            {active.label}.
+          </span>{" "}
+          {active.desc}
+        </p>
+      </div>
+      <figcaption className="mt-3 text-center text-xs text-ink-400">
+        Click a concept to highlight it in the graph.
+      </figcaption>
+    </figure>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* 8. WhenToUse — interactive "do I need LangGraph?" helper            */
+/* ------------------------------------------------------------------ */
+
+const WHEN_CRITERIA = [
+  "The task takes several steps to complete",
+  "The right next step depends on intermediate results (branches or loops)",
+  "It calls tools, APIs, or external systems",
+  "It must remember earlier turns or resume after a pause",
+  "A human needs to approve or edit actions mid-run",
+  "Multiple specialised agents collaborate",
+];
+
+const WHEN_TONES = {
+  sky: "border-sky-500/30 bg-sky-500/5 dark:bg-sky-500/10",
+  amber: "border-amber-500/30 bg-amber-500/5 dark:bg-amber-500/10",
+  brand: "border-brand-500/30 bg-brand-500/5 dark:bg-brand-500/10",
+} as const;
+
+export function WhenToUse() {
+  const [checked, setChecked] = useState<number[]>([]);
+  const toggle = (i: number) =>
+    setChecked((c) => (c.includes(i) ? c.filter((x) => x !== i) : [...c, i]));
+
+  const n = checked.length;
+  const verdict =
+    n === 0
+      ? {
+          tone: "sky" as const,
+          title: "A single LLM call is probably enough",
+          body: "Nothing here needs orchestration yet. Reach for the model SDK or a simple prompt.",
+        }
+      : n <= 2
+        ? {
+            tone: "amber" as const,
+            title: "A simple chain or a prebuilt agent may do",
+            body: "You have some complexity. A linear chain or a prebuilt agent could be enough — LangGraph is optional, but it will help as this grows.",
+          }
+        : {
+            tone: "brand" as const,
+            title: "LangGraph is a strong fit",
+            body: "Loops, state, tools, memory, human oversight, or multiple agents — this is exactly what LangGraph is built to orchestrate.",
+          };
+
+  return (
+    <figure className="not-prose my-8 rounded-2xl border border-ink-200/70 bg-[rgb(var(--bg-subtle))] p-5 dark:border-ink-800/70 sm:p-6">
+      <span className="mb-4 inline-flex items-center gap-2 text-sm font-semibold text-ink-900 dark:text-white">
+        <SlidersHorizontal className="h-4 w-4 text-brand-500" />
+        Do I need LangGraph?
+      </span>
+      <p className="mb-4 text-sm text-ink-500 dark:text-ink-400">
+        Tick everything that&apos;s true of your task.
+      </p>
+
+      <div className="space-y-2">
+        {WHEN_CRITERIA.map((c, i) => {
+          const isOn = checked.includes(i);
+          return (
+            <button
+              key={i}
+              type="button"
+              onClick={() => toggle(i)}
+              className={cn(
+                "flex w-full items-center gap-3 rounded-xl border p-3 text-left text-sm transition-all",
+                isOn
+                  ? "border-brand-400/60 bg-brand-500/10 text-ink-900 dark:text-white"
+                  : "border-ink-200/70 bg-white/60 text-ink-600 hover:border-brand-400/40 dark:border-ink-800/70 dark:bg-ink-900/40 dark:text-ink-300"
+              )}
+            >
+              <span
+                className={cn(
+                  "flex h-5 w-5 shrink-0 items-center justify-center rounded-md border transition-colors",
+                  isOn
+                    ? "border-brand-500 bg-brand-500 text-white"
+                    : "border-ink-300 dark:border-ink-600"
+                )}
+              >
+                {isOn && <Check className="h-3.5 w-3.5" />}
+              </span>
+              {c}
+            </button>
+          );
+        })}
+      </div>
+
+      <div
+        key={verdict.title}
+        className={cn(
+          "mt-4 animate-fade-up rounded-xl border p-4",
+          WHEN_TONES[verdict.tone]
+        )}
+      >
+        <p className="text-sm font-semibold text-ink-900 dark:text-white">
+          {verdict.title}
+        </p>
+        <p className="mt-1 text-sm leading-relaxed text-ink-600 dark:text-ink-300">
+          {verdict.body}
+        </p>
+      </div>
+    </figure>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* 9. EcosystemGrid — the pieces of the LangGraph ecosystem            */
+/* ------------------------------------------------------------------ */
+
+const ECOSYSTEM = [
+  {
+    icon: Workflow,
+    title: "LangGraph (OSS)",
+    tag: "Open source",
+    desc: "The core Python & JavaScript library for building stateful graphs.",
+  },
+  {
+    icon: Blocks,
+    title: "Prebuilt agents",
+    tag: "Open source",
+    desc: "create_react_agent, ToolNode, and supervisor / swarm helpers.",
+  },
+  {
+    icon: Database,
+    title: "Checkpointers & stores",
+    tag: "Open source",
+    desc: "Memory, SQLite and Postgres backends for persistence and long-term memory.",
+  },
+  {
+    icon: Terminal,
+    title: "LangGraph CLI",
+    tag: "Tooling",
+    desc: "langgraph dev and langgraph build for local runs and Docker images.",
+  },
+  {
+    icon: LayoutDashboard,
+    title: "LangGraph Studio",
+    tag: "Tooling",
+    desc: "A visual IDE to run, inspect, and debug your graphs step by step.",
+  },
+  {
+    icon: Cloud,
+    title: "LangGraph Platform",
+    tag: "Deployment",
+    desc: "Managed or self-hosted deployment with an API, persistence, and scaling.",
+  },
+] as const;
+
+export function EcosystemGrid() {
+  return (
+    <div className="not-prose my-8 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+      {ECOSYSTEM.map((e) => {
+        const Icon = e.icon;
+        return (
+          <div
+            key={e.title}
+            className="flex flex-col rounded-xl border border-ink-200/70 bg-white/60 p-4 dark:border-ink-800/70 dark:bg-ink-900/40"
+          >
+            <div className="flex items-center justify-between">
+              <span className="inline-flex h-9 w-9 items-center justify-center rounded-lg bg-brand-500/12 text-brand-600 dark:text-brand-300">
+                <Icon className="h-4 w-4" />
+              </span>
+              <span className="rounded-full bg-ink-100 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-ink-500 dark:bg-ink-800/70 dark:text-ink-400">
+                {e.tag}
+              </span>
+            </div>
+            <h4 className="mt-3 text-sm font-semibold text-ink-900 dark:text-white">
+              {e.title}
+            </h4>
+            <p className="mt-1 text-sm leading-relaxed text-ink-500 dark:text-ink-400">
+              {e.desc}
+            </p>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* 10. StackDiagram — LangChain vs LangGraph vs LangSmith              */
+/* ------------------------------------------------------------------ */
+
+const STACK = [
+  {
+    icon: Blocks,
+    name: "LangChain",
+    role: "Components & integrations",
+    desc: "Chat models, tools, retrievers, and embeddings — the building blocks you plug into a graph.",
+  },
+  {
+    icon: Workflow,
+    name: "LangGraph",
+    role: "Orchestration",
+    desc: "Stateful graphs, control flow, persistence, and human-in-the-loop — how the pieces run together.",
+  },
+  {
+    icon: Activity,
+    name: "LangSmith",
+    role: "Observability & evaluation",
+    desc: "Tracing, datasets, evaluations, and monitoring — how you see and improve what your app does.",
+  },
+] as const;
+
+export function StackDiagram() {
+  return (
+    <figure className="not-prose my-8 rounded-2xl border border-ink-200/70 bg-[rgb(var(--bg-subtle))] p-5 dark:border-ink-800/70 sm:p-6">
+      <div className="grid gap-3 sm:grid-cols-3">
+        {STACK.map((s) => {
+          const Icon = s.icon;
+          return (
+            <div
+              key={s.name}
+              className="flex flex-col rounded-xl border border-ink-200/70 bg-white/60 p-4 dark:border-ink-800/70 dark:bg-ink-900/40"
+            >
+              <span className="inline-flex h-9 w-9 items-center justify-center rounded-lg bg-brand-500/12 text-brand-600 dark:text-brand-300">
+                <Icon className="h-4 w-4" />
+              </span>
+              <h4 className="mt-3 text-base font-bold text-ink-900 dark:text-white">
+                {s.name}
+              </h4>
+              <p className="mt-0.5 text-xs font-semibold uppercase tracking-wider text-brand-600 dark:text-brand-400">
+                {s.role}
+              </p>
+              <p className="mt-2 text-sm leading-relaxed text-ink-500 dark:text-ink-400">
+                {s.desc}
+              </p>
+            </div>
+          );
+        })}
+      </div>
+      <figcaption className="mt-4 text-center text-xs text-ink-400">
+        Three independent tools that work well together — you can use any one
+        without the others.
+      </figcaption>
+    </figure>
   );
 }

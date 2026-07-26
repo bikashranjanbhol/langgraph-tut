@@ -6,9 +6,13 @@ import {
   AgentLoop,
   AutonomySpectrum,
   DeterminismDemo,
+  EcosystemGrid,
+  GraphAnatomy,
   LlmVsAgent,
   OrchestrationDiagram,
+  StackDiagram,
   UseCaseGrid,
+  WhenToUse,
 } from "@/components/diagrams";
 
 type CalloutType = "note" | "tip" | "warning" | "success";
@@ -101,11 +105,21 @@ export const mdxComponents: MDXComponents = {
       </a>
     );
   },
+  // Wrap tables so wide comparisons scroll instead of breaking the layout.
+  table: ({ children, ...props }) => (
+    <div className="my-6 overflow-x-auto">
+      <table {...props}>{children}</table>
+    </div>
+  ),
   Callout,
   AgentLoop,
   AutonomySpectrum,
   DeterminismDemo,
+  EcosystemGrid,
+  GraphAnatomy,
   LlmVsAgent,
   OrchestrationDiagram,
+  StackDiagram,
   UseCaseGrid,
+  WhenToUse,
 };

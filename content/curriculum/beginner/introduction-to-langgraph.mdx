@@ -1,0 +1,132 @@
+---
+updated: "2026-07-26"
+---
+
+In the last chapter we established what an AI agent is and why it needs orchestration. This chapter introduces the tool we'll use for that orchestration — **LangGraph** — and, just as importantly, teaches you when *not* to reach for it. We'll also place it in context alongside LangChain and LangSmith so you understand how the pieces fit together.
+
+## 2.1 What is LangGraph?
+
+**LangGraph** is a low-level orchestration framework for building **stateful, multi-actor applications** with large language models. It comes from the team behind LangChain, but it is a standalone library — you can use it entirely on its own, with any model provider.
+
+The core idea is simple: you model your application as a **graph**. The graph has three ingredients:
+
+- **State** — a shared data structure that flows through the application.
+- **Nodes** — units of work (usually functions) that read the state and return updates.
+- **Edges** — connections that decide which node runs next, including *conditional* edges that branch and *loops* that repeat.
+
+Because edges can point backwards, loops and cycles are first-class — which is exactly what agents need. On top of this graph model, LangGraph adds the production features we identified last chapter: persistence, streaming, human-in-the-loop, and observability.
+
+<Callout type="success" title="In one sentence">
+LangGraph lets you express an agent as an explicit graph of steps over a shared state — giving you the control, reliability, and visibility that hand-rolled agent loops lack.
+</Callout>
+
+It's also battle-tested: LangGraph is the foundation LangChain itself recommends for building agents, and it's used in production by many companies.
+
+## 2.2 When to use LangGraph
+
+LangGraph earns its place when your application has real **control-flow complexity**. Reach for it when you need one or more of these:
+
+- **Loops** — the agent should keep working (search, reason, act) until a goal is met, an unknown number of steps ahead of time.
+- **Branching** — the next step depends on intermediate results or model output.
+- **Tools** — the app calls external systems and must react to their results.
+- **Memory & persistence** — conversations must survive across turns, or the app must pause and resume (even across restarts).
+- **Human-in-the-loop** — execution should pause for approval, edits, or input.
+- **Multiple agents** — specialised agents coordinate and hand off work.
+- **Observability & control** — you need to see, debug, and steer exactly what happens.
+
+If your problem looks like a *stateful process that makes decisions*, LangGraph is the right tool.
+
+## 2.3 When LangGraph may be unnecessary
+
+Just as important: LangGraph is overkill for simple tasks, and adding it anyway only creates ceremony. You probably **don't** need it when:
+
+- The task is a **single LLM call** — summarize, classify, translate, extract.
+- The flow is a **short, fixed pipeline** with no branching, looping, or persistent state — a plain chain does the job.
+- You want a **quick prototype** and a prebuilt agent already covers it.
+- There's **no need** for memory, resumption, or human approval.
+
+In those cases, reach for the model SDK directly, or a simple LangChain chain. Use the checklist below to sanity-check your own task:
+
+<WhenToUse />
+
+<Callout type="tip" title="Complexity is a cost">
+Every capability you add — state, persistence, branching — is also something to design, test, and maintain. Start at the simplest tier that solves the problem and graduate to LangGraph when the task genuinely demands it.
+</Callout>
+
+## 2.4 LangGraph versus LangChain agents
+
+LangChain historically shipped higher-level agent abstractions — most notably the `AgentExecutor` — that ran the reason–act loop *for* you. They're quick to start with, but the loop is largely a black box: hard to customise, limited in how it manages state, and awkward to add persistence or human oversight to.
+
+LangGraph takes the opposite stance: it gives you the loop **explicitly**, as a graph you control. You decide the state, the branches, and where to pause. In fact, LangChain now recommends LangGraph for building agents, and the modern prebuilt (`create_react_agent`) lives *in* LangGraph.
+
+| Aspect | LangChain `AgentExecutor` (legacy) | LangGraph |
+| --- | --- | --- |
+| Control flow | Fixed, built-in loop | Fully customisable graph |
+| State | Limited, implicit | Typed, shared state you define |
+| Persistence | Not built in | Built-in checkpointers |
+| Streaming | Basic | Tokens, state, and events |
+| Human-in-the-loop | Not supported | First-class |
+| Multi-agent | Difficult | Native |
+| Debugging | Opaque | Traceable, plus a visual Studio |
+| Status | Maintenance / legacy | Recommended for new work |
+
+<Callout type="note" title="Not a competing library">
+LangGraph doesn't replace LangChain — it builds on and beside it. You'll still use LangChain's model and tool integrations *inside* your LangGraph nodes.
+</Callout>
+
+## 2.5 LangGraph versus traditional workflow engines
+
+If you've used **Airflow**, **Prefect**, **Temporal**, or **AWS Step Functions**, a graph-of-steps framework will feel familiar — but these tools solve a different problem. They're general-purpose engines for scheduling and durably executing **data pipelines and background jobs**, not for orchestrating an LLM's reasoning on a single request.
+
+The differences that matter for agents:
+
+| Aspect | Traditional workflow engines | LangGraph |
+| --- | --- | --- |
+| Built for | Data pipelines & durable jobs | LLM agents & reasoning |
+| Cycles / loops | Often acyclic (e.g. Airflow DAGs) | First-class loops |
+| LLM features | None | Streaming, tools, messages, tokens |
+| State model | Task inputs / outputs | Shared, typed state with reducers |
+| Human-in-the-loop | Bespoke | Built in for approvals |
+| Granularity | Batch jobs | Per-request agent steps |
+
+<Callout type="tip" title="They can complement each other">
+These aren't mutually exclusive. A common pattern is to run a LangGraph agent *as a step* inside a Temporal or Airflow workflow — the engine handles enterprise scheduling and durability, while LangGraph handles the agent's reasoning.
+</Callout>
+
+## 2.6 Understanding graph-based orchestration
+
+"Graph-based orchestration" is the heart of LangGraph, so let's make it concrete. Your application becomes a directed graph: execution enters at **START**, flows from node to node along **edges**, and exits at **END**. Along the way, a shared **state** object is read and updated by each node. **Conditional edges** let the graph choose its path, and **loops** let it repeat.
+
+Here's the canonical agent graph — click each concept to see it highlighted:
+
+<GraphAnatomy />
+
+This model is what makes agents tractable. A tangle of `if` statements and `while` loops becomes a diagram you can see, reason about, and visualise. And because the structure is explicit, LangGraph can layer persistence, streaming, and human-in-the-loop on top automatically — it always knows exactly where you are in the graph.
+
+<Callout type="success" title="The mental model">
+Describe *what the state is*, *what each node does*, and *how to move between nodes*. LangGraph runs the loop, tracks the state, and hands you production features for free.
+</Callout>
+
+## 2.7 Overview of the LangGraph ecosystem
+
+LangGraph is more than one library. It's a small ecosystem that takes you from a local experiment to a deployed service:
+
+<EcosystemGrid />
+
+You'll spend this course mostly in the **open-source library** and its **prebuilt components** and **checkpointers**. Later, when we deploy, we'll meet the **CLI**, **Studio**, and **Platform**. The important thing now is that it's all the same graph — you build locally and promote the identical code to production.
+
+## 2.8 LangGraph, LangChain, and LangSmith
+
+These three names come up constantly, and it's easy to conflate them. They're **separate, independent tools** that happen to work beautifully together — each owns a different layer of building LLM applications.
+
+<StackDiagram />
+
+- **LangChain** gives you the *building blocks* — standardised interfaces to chat models, tools, retrievers, and embeddings — so you can swap providers without rewriting code.
+- **LangGraph** gives you the *orchestration* — stateful graphs that wire those blocks into reliable, controllable agents.
+- **LangSmith** gives you *observability and evaluation* — tracing every run, building test datasets, and monitoring quality in production. It's provider-agnostic and works with or without the other two.
+
+You can mix and match: use LangGraph without LangChain, trace a non-LangChain app with LangSmith, or use all three together (the most common setup). Understanding the split keeps you from reaching for the wrong tool.
+
+<Callout type="note" title="What's next">
+You now know what LangGraph is, when to use it, and how it relates to the wider ecosystem. Next we'll set up a development environment so you can start building — then, in Chapter 4, we'll dig into the core concepts hands-on.
+</Callout>
