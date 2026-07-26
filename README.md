@@ -6,10 +6,20 @@ structured, hands-on curriculum.
 
 > An independent educational project. Not affiliated with or endorsed by LangChain, Inc.
 
+## Two learning tracks
+
+- **Full Curriculum** (`/curriculum`) — the complete four-part course (66 chapters,
+  700+ lessons) covering Beginner, Intermediate, Advanced, and Workplace/Professional
+  material. The entire syllabus is defined in one data file
+  ([`lib/syllabus.ts`](./lib/syllabus.ts)) and is browsable immediately; each chapter
+  shows its lesson outline until authored MDX content is added.
+- **Quickstart** (`/tutorials`) — a focused, fast 12-tutorial track that takes you from
+  your first `StateGraph` to a multi-agent system with runnable code.
+
 ## Features
 
-- **12-part learning path** — a complete curriculum from your first `StateGraph` to
-  production multi-agent systems, written as MDX with runnable code examples.
+- **Data-driven curriculum** — the whole Part → Chapter → Section tree lives in
+  `lib/syllabus.ts`; pages, navigation, and the sitemap are generated from it.
 - **Top-notch design** — responsive, dark/light theme with no flash, gradient hero with
   an animated state-graph motif, sticky table-of-contents with scroll-spy, and polished
   typography.
@@ -71,7 +81,35 @@ content/tutorials/*.mdx  # the tutorial content
 lib/                     # content loading, MDX options, site config, utils
 ```
 
-## Adding a tutorial
+## Adding curriculum chapter content
+
+The full curriculum's structure is fixed in `lib/syllabus.ts`. To turn a chapter's
+outline into a full written lesson, drop an MDX file at:
+
+```
+content/curriculum/<part-slug>/<chapter-slug>.mdx
+```
+
+For example, Part I → "LangGraph Core Concepts" becomes
+`content/curriculum/beginner/langgraph-core-concepts.mdx`. Part slugs are
+`beginner`, `intermediate`, `advanced`, `workplace`; chapter slugs are the
+slugified chapter title (visible in the chapter's URL). Optional frontmatter:
+
+```mdx
+---
+updated: "2026-07-26"
+---
+
+## 4.1 Understanding graphs
+
+Your content — prose, fenced code blocks (syntax-highlighted), and <Callout>s.
+```
+
+When the file exists, the chapter page renders it (with a heading-based table of
+contents) instead of the outline, and the chapter is marked **Available** in its
+part listing. No code changes required.
+
+## Adding a Quickstart tutorial
 
 Create a new `.mdx` file in `content/tutorials/` with frontmatter:
 

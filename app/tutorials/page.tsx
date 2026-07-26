@@ -6,14 +6,14 @@ import { DifficultyBadge } from "@/components/ui";
 import { siteConfig } from "@/lib/site";
 
 export const metadata: Metadata = {
-  title: "Learning Path — Every LangGraph Tutorial",
+  title: "Quickstart Track — Hands-on LangGraph Tutorials",
   description:
-    "A complete, structured LangGraph learning path. Work through hands-on tutorials from core concepts and your first StateGraph to persistence, human-in-the-loop and multi-agent systems.",
+    "A focused, fast LangGraph track. Work through hands-on tutorials from core concepts and your first StateGraph to persistence, human-in-the-loop and multi-agent systems. For the full course, see the curriculum.",
   alternates: { canonical: "/tutorials" },
   openGraph: {
-    title: "LangGraph Learning Path — Every Tutorial",
+    title: "LangGraph Quickstart Track — Hands-on Tutorials",
     description:
-      "A complete, structured LangGraph learning path, from fundamentals to multi-agent systems.",
+      "A focused, fast LangGraph track, from fundamentals to multi-agent systems.",
     url: `${siteConfig.url}/tutorials`,
   },
 };
@@ -79,14 +79,22 @@ export default function TutorialsPage() {
         <div className="relative mx-auto max-w-6xl px-4 py-16 sm:px-6">
           <span className="inline-flex items-center gap-2 rounded-full border border-brand-400/30 bg-brand-500/10 px-3 py-1 text-xs font-medium text-brand-700 dark:text-brand-300">
             <GraduationCap className="h-3.5 w-3.5" />
-            {all.length} tutorials · {groups.length} modules
+            Quickstart · {all.length} tutorials · {groups.length} modules
           </span>
           <h1 className="mt-5 text-4xl font-extrabold tracking-tight text-ink-900 dark:text-white sm:text-5xl">
-            The LangGraph <span className="gradient-text">Learning Path</span>
+            LangGraph <span className="gradient-text">Quickstart</span>
           </h1>
           <p className="mt-4 max-w-2xl text-lg text-ink-600 dark:text-ink-300">
-            Follow the path top to bottom, or jump to the topic you need. Every
-            tutorial includes plain-English explanations and runnable code.
+            A fast, hands-on path — follow it top to bottom, or jump to the topic
+            you need. Every tutorial includes plain-English explanations and
+            runnable code. Want the deep, comprehensive course?{" "}
+            <Link
+              href="/curriculum"
+              className="font-medium text-brand-600 underline decoration-brand-400/40 underline-offset-2 dark:text-brand-300"
+            >
+              Explore the full curriculum
+            </Link>
+            .
           </p>
         </div>
       </section>

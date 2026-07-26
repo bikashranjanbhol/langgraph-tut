@@ -1,6 +1,7 @@
 import Link from "next/link";
 import {
   ArrowRight,
+  BookOpen,
   Boxes,
   GitBranch,
   Repeat,
@@ -11,8 +12,9 @@ import {
   Zap,
 } from "lucide-react";
 import { GraphVisual } from "@/components/graph-visual";
-import { TutorialCard } from "@/components/tutorial-card";
 import { getAllTutorials } from "@/lib/tutorials";
+import { syllabus, getSyllabusStats, partSectionCount } from "@/lib/syllabus";
+import { DifficultyBadge } from "@/components/ui";
 import { siteConfig } from "@/lib/site";
 
 const features = [
@@ -50,10 +52,10 @@ const features = [
 
 export default function HomePage() {
   const tutorials = getAllTutorials();
-  const preview = tutorials.slice(0, 6);
+  const s = getSyllabusStats();
   const stats = [
-    { value: `${tutorials.length}`, label: "Guided tutorials" },
-    { value: "12", label: "Core concepts" },
+    { value: `${s.chapters}`, label: "Chapters" },
+    { value: `${s.sections}`, label: "Lessons" },
     { value: "100%", label: "Free & open" },
   ];
 
@@ -103,10 +105,10 @@ export default function HomePage() {
 
               <div className="mt-8 flex flex-wrap items-center gap-3">
                 <Link
-                  href="/tutorials"
+                  href="/curriculum"
                   className="inline-flex items-center gap-2 rounded-xl bg-brand-600 px-5 py-3 text-sm font-semibold text-white shadow-lg shadow-brand-600/25 transition-all hover:bg-brand-500 hover:shadow-brand-500/40"
                 >
-                  Start the learning path
+                  Explore the curriculum
                   <ArrowRight className="h-4 w-4" />
                 </Link>
                 <a
@@ -207,7 +209,67 @@ app = g.compile()`}</code>
       </section>
 
       {/* ---------------------------------------------------------------- */}
-      {/* Curriculum preview                                               */}
+      {/* Two learning tracks                                              */}
+      {/* ---------------------------------------------------------------- */}
+      <section className="mx-auto max-w-6xl px-4 py-20 sm:px-6">
+        <div className="mx-auto max-w-2xl text-center">
+          <span className="text-sm font-semibold uppercase tracking-wider text-brand-600 dark:text-brand-400">
+            Two ways to learn
+          </span>
+          <h2 className="mt-3 text-3xl font-bold tracking-tight text-ink-900 dark:text-white sm:text-4xl">
+            Pick your pace
+          </h2>
+        </div>
+
+        <div className="mt-12 grid gap-6 lg:grid-cols-2">
+          <Link
+            href="/curriculum"
+            className="group card card-hover flex flex-col p-7"
+          >
+            <span className="inline-flex items-center gap-2 text-sm font-semibold uppercase tracking-wider text-brand-600 dark:text-brand-400">
+              <BookOpen className="h-4 w-4" />
+              Full curriculum
+            </span>
+            <h3 className="mt-3 text-xl font-bold text-ink-900 dark:text-white">
+              The complete course
+            </h3>
+            <p className="mt-2 flex-1 text-sm leading-relaxed text-ink-500 dark:text-ink-400">
+              Four parts and {s.chapters} chapters, from beginner foundations to
+              advanced systems and shipping agents in the workplace. The deep,
+              structured path.
+            </p>
+            <span className="mt-5 inline-flex items-center gap-1.5 text-sm font-semibold text-brand-600 dark:text-brand-300">
+              Browse all {s.parts} parts
+              <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-1" />
+            </span>
+          </Link>
+
+          <Link
+            href="/tutorials"
+            className="group card card-hover flex flex-col p-7"
+          >
+            <span className="inline-flex items-center gap-2 text-sm font-semibold uppercase tracking-wider text-brand-600 dark:text-brand-400">
+              <Zap className="h-4 w-4" />
+              Quickstart track
+            </span>
+            <h3 className="mt-3 text-xl font-bold text-ink-900 dark:text-white">
+              {tutorials.length} hands-on tutorials
+            </h3>
+            <p className="mt-2 flex-1 text-sm leading-relaxed text-ink-500 dark:text-ink-400">
+              A focused, fast path that takes you from your first StateGraph to a
+              multi-agent system with runnable code — perfect if you want to build
+              something today.
+            </p>
+            <span className="mt-5 inline-flex items-center gap-1.5 text-sm font-semibold text-brand-600 dark:text-brand-300">
+              Start the quickstart
+              <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-1" />
+            </span>
+          </Link>
+        </div>
+      </section>
+
+      {/* ---------------------------------------------------------------- */}
+      {/* Curriculum parts                                                 */}
       {/* ---------------------------------------------------------------- */}
       <section className="relative overflow-hidden py-20">
         <div
@@ -219,28 +281,53 @@ app = g.compile()`}</code>
             <div className="max-w-2xl">
               <span className="inline-flex items-center gap-2 text-sm font-semibold uppercase tracking-wider text-brand-600 dark:text-brand-400">
                 <GitBranch className="h-4 w-4" />
-                The learning path
+                The curriculum
               </span>
               <h2 className="mt-3 text-3xl font-bold tracking-tight text-ink-900 dark:text-white sm:text-4xl">
-                From zero to multi-agent systems
+                Four parts, zero to production
               </h2>
               <p className="mt-4 text-ink-600 dark:text-ink-300">
-                A structured, sequential curriculum. Each lesson builds on the
-                last, with concepts explained plainly and code you can run.
+                A sequential path that grows with you — from your first graph to
+                enterprise-grade, governed agent systems.
               </p>
             </div>
             <Link
-              href="/tutorials"
+              href="/curriculum"
               className="inline-flex shrink-0 items-center gap-1.5 text-sm font-semibold text-brand-600 hover:text-brand-500 dark:text-brand-300"
             >
-              View full path
+              View full curriculum
               <ArrowRight className="h-4 w-4" />
             </Link>
           </div>
 
-          <div className="mt-12 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
-            {preview.map((t, i) => (
-              <TutorialCard key={t.slug} tutorial={t} index={i + 1} />
+          <div className="mt-12 grid gap-5 sm:grid-cols-2">
+            {syllabus.map((part) => (
+              <Link
+                key={part.slug}
+                href={`/curriculum/${part.slug}`}
+                className="group card card-hover flex flex-col p-6"
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <span className="inline-flex items-center gap-2">
+                    <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-brand-500/12 font-mono text-xs font-bold text-brand-600 dark:text-brand-300">
+                      {part.roman}
+                    </span>
+                    <span className="text-xs font-semibold uppercase tracking-wider text-ink-400 dark:text-ink-500">
+                      Part {part.roman} · {part.focus}
+                    </span>
+                  </span>
+                  <DifficultyBadge level={part.level} />
+                </div>
+                <h3 className="mt-4 text-lg font-bold text-ink-900 transition-colors group-hover:text-brand-600 dark:text-white dark:group-hover:text-brand-300">
+                  {part.title}
+                </h3>
+                <p className="mt-2 flex-1 text-sm leading-relaxed text-ink-500 dark:text-ink-400">
+                  {part.subtitle}
+                </p>
+                <span className="mt-4 text-xs text-ink-400 dark:text-ink-500">
+                  {part.chapters.length} chapters · {partSectionCount(part)} lessons
+                </span>
+              </Link>
             ))}
           </div>
         </div>
@@ -264,10 +351,10 @@ app = g.compile()`}</code>
               multi-agent systems. No sign-up, no paywall — just learning.
             </p>
             <Link
-              href="/tutorials/introduction-to-langgraph"
+              href="/curriculum/beginner/introduction-to-ai-agents"
               className="mt-8 inline-flex items-center gap-2 rounded-xl bg-white px-6 py-3 text-sm font-semibold text-brand-700 shadow-lg transition-transform hover:scale-[1.02]"
             >
-              Begin lesson 1
+              Begin Part I · Chapter 1
               <ArrowRight className="h-4 w-4" />
             </Link>
           </div>

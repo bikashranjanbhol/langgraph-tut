@@ -10,7 +10,8 @@ import { siteConfig } from "@/lib/site";
 import { cn } from "@/lib/utils";
 
 const links = [
-  { title: "Learning Path", href: "/tutorials" },
+  { title: "Curriculum", href: "/curriculum" },
+  { title: "Quickstart", href: "/tutorials" },
   { title: "About", href: "/about" },
 ];
 
@@ -75,7 +76,7 @@ export function Header() {
           </a>
           <ThemeToggle />
           <Link
-            href="/tutorials"
+            href="/curriculum"
             className="ml-2 inline-flex items-center rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white shadow-sm shadow-brand-600/30 transition-all hover:bg-brand-500 hover:shadow-brand-500/40"
           >
             Start Learning
@@ -109,7 +110,7 @@ export function Header() {
               </Link>
             ))}
             <Link
-              href="/tutorials"
+              href="/curriculum"
               className="mt-2 block rounded-lg bg-brand-600 px-3 py-2.5 text-center text-sm font-semibold text-white"
             >
               Start Learning

@@ -27,10 +27,18 @@ export function Footer() {
             <ul className="mt-4 space-y-2.5 text-sm">
               <li>
                 <Link
+                  href="/curriculum"
+                  className="text-ink-500 transition-colors hover:text-brand-600 dark:text-ink-400 dark:hover:text-brand-300"
+                >
+                  Full Curriculum
+                </Link>
+              </li>
+              <li>
+                <Link
                   href="/tutorials"
                   className="text-ink-500 transition-colors hover:text-brand-600 dark:text-ink-400 dark:hover:text-brand-300"
                 >
-                  Learning Path
+                  Quickstart Track
                 </Link>
               </li>
               <li>

@@ -28,8 +28,8 @@ export const siteConfig = {
   ],
   nav: [
     { title: "Home", href: "/" },
-    { title: "Learning Path", href: "/tutorials" },
-    { title: "Concepts", href: "/tutorials#concepts" },
+    { title: "Curriculum", href: "/curriculum" },
+    { title: "Quickstart", href: "/tutorials" },
     { title: "About", href: "/about" },
   ],
   links: {
