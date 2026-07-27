@@ -647,7 +647,15 @@ export function GraphAnatomy() {
           aria-label="A LangGraph state graph: START to agent, a conditional edge to tools or END, and a loop from tools back to agent."
         >
           <defs>
-            <linearGradient id="ga-grad" x1="0" y1="0" x2="1" y2="1">
+            {/* userSpaceOnUse so vertical (zero-width) edges still paint */}
+            <linearGradient
+              id="ga-grad"
+              gradientUnits="userSpaceOnUse"
+              x1="80"
+              y1="40"
+              x2="560"
+              y2="260"
+            >
               <stop offset="0%" stopColor="#34d39e" />
               <stop offset="100%" stopColor="#059669" />
             </linearGradient>

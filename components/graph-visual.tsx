@@ -30,7 +30,14 @@ export function GraphVisual({ className }: { className?: string }) {
       className={cn("h-full w-full", className)}
     >
       <defs>
-        <linearGradient id="edge-grad" x1="0" y1="0" x2="0" y2="1">
+        <linearGradient
+          id="edge-grad"
+          gradientUnits="userSpaceOnUse"
+          x1="0"
+          y1="0"
+          x2="0"
+          y2="350"
+        >
           <stop offset="0%" stopColor="#34d39e" />
           <stop offset="100%" stopColor="#059669" />
         </linearGradient>
