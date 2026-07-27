@@ -19,7 +19,9 @@ import {
   FileCode,
   Folder,
   GitBranch,
+  GitMerge,
   KeyRound,
+  Layers,
   LayoutDashboard,
   LifeBuoy,
   Play,
@@ -1714,4 +1716,221 @@ function Chip({ label, terminal }: { label: string; terminal?: boolean }) {
 
 function Down() {
   return <span className="h-4 w-px bg-brand-400/50" aria-hidden="true" />;
+}
+
+/* ------------------------------------------------------------------ */
+/* 16. StateMerge — how a partial update merges into the state         */
+/* ------------------------------------------------------------------ */
+
+const MERGE_CHANNELS = [
+  { key: "query", current: '"hi"', update: '"hello there"' },
+  { key: "count", current: "1", update: "2" },
+  { key: "status", current: '"pending"', update: '"done"' },
+];
+
+export function StateMerge() {
+  const [included, setIncluded] = useState<string[]>(["count", "status"]);
+  const toggle = (k: string) =>
+    setIncluded((s) => (s.includes(k) ? s.filter((x) => x !== k) : [...s, k]));
+
+  return (
+    <figure className="not-prose my-8 rounded-2xl border border-ink-200/70 bg-[rgb(var(--bg-subtle))] p-5 dark:border-ink-800/70 sm:p-6">
+      <span className="mb-4 inline-flex items-center gap-2 text-sm font-semibold text-ink-900 dark:text-white">
+        <GitMerge className="h-4 w-4 text-brand-500" />
+        How a partial update merges
+      </span>
+
+      <p className="mb-4 text-sm text-ink-500 dark:text-ink-400">
+        Toggle which channels the node returns, and watch how the state merges.
+      </p>
+
+      <div className="grid gap-3 lg:grid-cols-3">
+        {/* current */}
+        <div className="rounded-xl border border-ink-200/70 bg-white/60 p-4 dark:border-ink-800/70 dark:bg-ink-900/40">
+          <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-ink-400">
+            Current state
+          </p>
+          <div className="space-y-1 font-mono text-[13px]">
+            {MERGE_CHANNELS.map((c) => (
+              <div key={c.key} className="text-ink-600 dark:text-ink-300">
+                <span className="text-sky-500 dark:text-sky-300">{c.key}</span>
+                <span className="text-ink-400">: </span>
+                <span className="text-emerald-600 dark:text-emerald-300">
+                  {c.current}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* node returns */}
+        <div className="rounded-xl border border-brand-400/40 bg-brand-500/5 p-4 dark:bg-brand-500/10">
+          <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-ink-400">
+            Node returns
+          </p>
+          <div className="mb-3 flex flex-wrap gap-1.5">
+            {MERGE_CHANNELS.map((c) => {
+              const on = included.includes(c.key);
+              return (
+                <button
+                  key={c.key}
+                  type="button"
+                  onClick={() => toggle(c.key)}
+                  className={cn(
+                    "rounded-md border px-2 py-1 font-mono text-[11px] transition-all",
+                    on
+                      ? "border-brand-500 bg-brand-500 text-white"
+                      : "border-ink-300 text-ink-400 line-through dark:border-ink-600"
+                  )}
+                >
+                  {c.key}
+                </button>
+              );
+            })}
+          </div>
+          <div className="font-mono text-[13px]">
+            <span className="text-ink-400">return {"{"}</span>
+            {MERGE_CHANNELS.filter((c) => included.includes(c.key)).map((c) => (
+              <div key={c.key} className="pl-4 text-ink-700 dark:text-ink-200">
+                <span className="text-sky-500 dark:text-sky-300">{c.key}</span>
+                <span className="text-ink-400">: </span>
+                <span className="text-emerald-600 dark:text-emerald-300">
+                  {c.update}
+                </span>
+                <span className="text-ink-400">,</span>
+              </div>
+            ))}
+            <span className="text-ink-400">{"}"}</span>
+          </div>
+        </div>
+
+        {/* merged */}
+        <div className="rounded-xl border border-ink-200/70 bg-white/60 p-4 dark:border-ink-800/70 dark:bg-ink-900/40">
+          <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-ink-400">
+            New state
+          </p>
+          <div className="space-y-1 font-mono text-[13px]">
+            {MERGE_CHANNELS.map((c) => {
+              const changed = included.includes(c.key);
+              return (
+                <div
+                  key={c.key}
+                  className={cn(
+                    "flex items-center gap-1.5 rounded px-1.5 py-0.5",
+                    changed ? "bg-brand-500/15" : ""
+                  )}
+                >
+                  <span className="text-sky-500 dark:text-sky-300">{c.key}</span>
+                  <span className="text-ink-400">:</span>
+                  <span className="text-emerald-600 dark:text-emerald-300">
+                    {changed ? c.update : c.current}
+                  </span>
+                  <span
+                    className={cn(
+                      "ml-auto rounded px-1.5 text-[10px] uppercase tracking-wide",
+                      changed
+                        ? "bg-brand-500/25 text-brand-700 dark:text-brand-200"
+                        : "text-ink-400"
+                    )}
+                  >
+                    {changed ? "updated" : "kept"}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+
+      <figcaption className="mt-4 text-center text-xs text-ink-400">
+        Only the channels a node returns change. Everything else is preserved.
+      </figcaption>
+    </figure>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* 17. StateScopes — input, internal, and output state                 */
+/* ------------------------------------------------------------------ */
+
+const SCOPE_CHANNELS = [
+  { key: "question", scope: "input", desc: "Provided by the caller when the graph is invoked." },
+  { key: "documents", scope: "internal", desc: "Fetched mid-run; useful between nodes, never exposed." },
+  { key: "draft", scope: "internal", desc: "A working scratchpad passed node to node." },
+  { key: "answer", scope: "output", desc: "Returned to the caller as the result." },
+];
+
+const SCOPE_TABS = [
+  { id: "all", label: "All channels" },
+  { id: "input", label: "Input" },
+  { id: "internal", label: "Internal" },
+  { id: "output", label: "Output" },
+] as const;
+
+const SCOPE_BADGE: Record<string, string> = {
+  input: "bg-sky-500/15 text-sky-700 dark:text-sky-300",
+  internal: "bg-ink-200 text-ink-600 dark:bg-ink-800 dark:text-ink-300",
+  output: "bg-brand-500/15 text-brand-700 dark:text-brand-300",
+};
+
+export function StateScopes() {
+  const [tab, setTab] = useState<string>("all");
+  const on = (scope: string) => tab === "all" || tab === scope;
+
+  return (
+    <figure className="not-prose my-8 rounded-2xl border border-ink-200/70 bg-[rgb(var(--bg-subtle))] p-5 dark:border-ink-800/70 sm:p-6">
+      <span className="mb-4 inline-flex items-center gap-2 text-sm font-semibold text-ink-900 dark:text-white">
+        <Layers className="h-4 w-4 text-brand-500" />
+        Input, internal &amp; output state
+      </span>
+
+      <div className="mb-4 flex flex-wrap gap-2">
+        {SCOPE_TABS.map((t) => (
+          <button
+            key={t.id}
+            type="button"
+            onClick={() => setTab(t.id)}
+            className={cn(
+              "rounded-lg border px-3 py-1.5 text-sm font-medium transition-all",
+              tab === t.id
+                ? "border-brand-400/70 bg-brand-500/10 text-brand-700 dark:text-brand-200"
+                : "border-ink-200/70 bg-white/60 text-ink-500 hover:border-brand-400/40 dark:border-ink-800/70 dark:bg-ink-900/40 dark:text-ink-400"
+            )}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      <div className="space-y-2">
+        {SCOPE_CHANNELS.map((c) => (
+          <div
+            key={c.key}
+            style={{ opacity: on(c.scope) ? 1 : 0.3, transition: "opacity .3s" }}
+            className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border border-ink-200/70 bg-white/60 p-3 dark:border-ink-800/70 dark:bg-ink-900/40"
+          >
+            <span className="font-mono text-sm font-semibold text-ink-800 dark:text-ink-100">
+              {c.key}
+            </span>
+            <span
+              className={cn(
+                "rounded-full px-2 py-0.5 text-[11px] font-medium capitalize",
+                SCOPE_BADGE[c.scope]
+              )}
+            >
+              {c.scope}
+            </span>
+            <span className="w-full text-sm text-ink-500 dark:text-ink-400 sm:w-auto sm:flex-1">
+              {c.desc}
+            </span>
+          </div>
+        ))}
+      </div>
+
+      <figcaption className="mt-4 text-center text-xs text-ink-400">
+        Separate input and output schemas let callers see only what they need —
+        internal channels stay hidden.
+      </figcaption>
+    </figure>
+  );
 }

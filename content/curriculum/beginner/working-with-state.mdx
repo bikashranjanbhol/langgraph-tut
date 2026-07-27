@@ -1,0 +1,226 @@
+---
+updated: "2026-07-26"
+---
+
+State is the heart of every LangGraph application, so it deserves a chapter of its own. We'll go deep on how nodes read and write it, why you return updates instead of mutating, how to scope input and output, and how to add defaults and validation with dataclasses and Pydantic. Master state and the rest of LangGraph falls into place.
+
+## 6.1 State as shared application data
+
+In LangGraph, nodes don't call each other or pass arguments directly. Instead they communicate through a single **shared state** object that flows through the graph. One node writes a value; a later node reads it. The state *is* the channel of communication.
+
+This is a deliberate design choice. Because all data lives in one well-defined place, LangGraph can persist it, stream it, resume it, and let you inspect it at any point. Think of the state as the application's **working memory** — everything the graph knows so far.
+
+```python
+from typing_extensions import TypedDict
+
+
+class State(TypedDict):
+    question: str
+    documents: list[str]
+    answer: str
+```
+
+## 6.2 Reading values from state
+
+Inside a node, the state arrives as its schema type. With a `TypedDict`, that's a plain dictionary — read channels by key:
+
+```python
+def generate(state: State) -> dict:
+    question = state["question"]
+    docs = state["documents"]
+    ...
+```
+
+If a channel might be missing, use `.get()` with a default rather than risking a `KeyError`:
+
+```python
+docs = state.get("documents", [])
+```
+
+<Callout type="note" title="Reading differs by schema type">
+With a `TypedDict`, you read via keys (`state["x"]`). With a dataclass or Pydantic model — covered later in this chapter — you read via attributes (`state.x`). The graph behaviour is the same; only the access style changes.
+</Callout>
+
+## 6.3 Returning state updates
+
+A node changes the state by **returning a dictionary** of the channels it wants to update. LangGraph takes that dictionary and merges it into the running state:
+
+```python
+def retrieve(state: State) -> dict:
+    docs = search(state["question"])
+    return {"documents": docs}   # sets the `documents` channel
+```
+
+You never assign to the state directly. You *describe* the change by returning it, and LangGraph applies it. This indirection is what makes persistence, streaming, and parallel execution possible.
+
+## 6.4 Partial state updates
+
+A node returns only the channels it changed — a **partial update**. Channels it doesn't mention are left exactly as they were. By default, returning a channel **overwrites** its value.
+
+Toggle which channels this node returns and watch how the state merges:
+
+<StateMerge />
+
+This is why nodes stay small and composable: each one touches just the slice of state it's responsible for, and LangGraph stitches the results together.
+
+<Callout type="tip" title="Overwrite is the default — reducers change it">
+By default, returning a channel replaces its value. Sometimes you want to *accumulate* instead (append to a list, add to a counter). That's what <strong>reducers</strong> do — like the <code>add_messages</code> reducer for chat history. Reducers get full treatment in the intermediate part; for now, know that the default is overwrite.
+</Callout>
+
+## 6.5 Avoiding direct state mutation
+
+Because the merge model relies on nodes *returning* updates, mutating the state object in place is a bug waiting to happen — especially with mutable values like lists and dicts.
+
+```python
+# ❌ Wrong — mutates the existing list in place
+def add_doc(state: State) -> dict:
+    state["documents"].append(new_doc)   # don't do this
+    return {}
+
+# ✅ Right — return a new value for the channel
+def add_doc(state: State) -> dict:
+    return {"documents": state["documents"] + [new_doc]}
+```
+
+<Callout type="warning" title="Why mutation breaks things">
+In-place mutation bypasses LangGraph's update mechanism. It can corrupt checkpoints, produce wrong results when branches run in parallel, and interact badly with reducers — often in ways that only show up intermittently. Always return a new value; never mutate the state you were given.
+</Callout>
+
+## 6.6 Input, internal, and output state
+
+By default, a graph has one schema and callers see every channel. But often you want a clean boundary: callers should provide only certain inputs and receive only certain outputs, while intermediate channels stay hidden.
+
+Explore how channels split across those scopes:
+
+<StateScopes />
+
+You express this with **separate input and output schemas**. Define the full state, plus narrower schemas for what goes in and comes out:
+
+```python
+class InputState(TypedDict):
+    question: str
+
+
+class OutputState(TypedDict):
+    answer: str
+
+
+class OverallState(TypedDict):
+    question: str
+    documents: list[str]   # internal
+    draft: str             # internal
+    answer: str
+
+
+builder = StateGraph(
+    OverallState,
+    input_schema=InputState,
+    output_schema=OutputState,
+)
+```
+
+Now callers pass only `question` and get back only `answer`; `documents` and `draft` are internal working memory.
+
+<Callout type="note" title="A note on parameter names">
+The keyword arguments for these schemas have evolved across LangGraph versions (you may see <code>input</code>/<code>output</code> in older code and <code>input_schema</code>/<code>output_schema</code> in newer). The concept is stable; check your installed version's signature if in doubt.
+</Callout>
+
+## 6.7 Default values
+
+A `TypedDict` has no notion of default values — every key is expected to be present. That's fine for inputs your caller always provides, but awkward for internal channels that start empty. You have a few options:
+
+The simplest is to read with a default inside the node:
+
+```python
+docs = state.get("documents", [])   # default to empty list
+```
+
+Or mark optional keys so they aren't required as input:
+
+```python
+from typing_extensions import TypedDict, NotRequired
+
+
+class State(TypedDict):
+    question: str
+    documents: NotRequired[list[str]]   # optional
+```
+
+For real defaults that are filled in automatically, use a dataclass or Pydantic model (next sections), which support default values natively.
+
+## 6.8 State validation
+
+`TypedDict` types are hints — they are **not** checked at run time. If a caller passes a number where you expected a string, nothing complains until something breaks downstream.
+
+When you need guarantees, use a **Pydantic** model as your state schema. LangGraph validates updates against it, so invalid data is caught immediately with a clear error:
+
+```python
+from pydantic import BaseModel, field_validator
+
+
+class State(BaseModel):
+    question: str
+    temperature: float = 0.0
+
+    @field_validator("temperature")
+    @classmethod
+    def check_range(cls, v: float) -> float:
+        if not 0.0 <= v <= 1.0:
+            raise ValueError("temperature must be between 0 and 1")
+        return v
+```
+
+<Callout type="tip" title="Validate at the boundary">
+Validation is most valuable on the graph's inputs, where untrusted data enters. A Pydantic input schema turns malformed requests into clear errors instead of confusing failures three nodes later.
+</Callout>
+
+## 6.9 Using dataclasses
+
+A Python **dataclass** is a middle ground: more structure than a `TypedDict` (attribute access, real defaults) without Pydantic's validation. Use it as a state schema and read channels as attributes:
+
+```python
+from dataclasses import dataclass, field
+
+
+@dataclass
+class State:
+    question: str
+    documents: list[str] = field(default_factory=list)  # default
+    answer: str = ""
+
+
+def retrieve(state: State) -> dict:
+    docs = search(state.question)     # attribute access
+    return {"documents": docs}        # still return a dict update
+```
+
+Note the two differences from a `TypedDict`: you **read** with `state.question` (attribute), but you still **return** a plain dict of updates. Defaults (`field(default_factory=list)`) mean internal channels don't need to be provided as input.
+
+## 6.10 Introduction to Pydantic state models
+
+**Pydantic** models give you the most: attribute access, default values, *and* run-time validation and type coercion. They're the right choice when correctness matters — especially at a graph's boundaries.
+
+```python
+from pydantic import BaseModel
+
+
+class State(BaseModel):
+    question: str
+    documents: list[str] = []
+    answer: str = ""
+
+
+def generate(state: State) -> dict:
+    # state.question is guaranteed to be a validated str
+    return {"answer": call_model(state.question, state.documents)}
+```
+
+When the graph updates the state, Pydantic validates the new values against the model. Bad data fails fast with a descriptive error, rather than silently propagating.
+
+<Callout type="note" title="Which schema type should I use?">
+<strong>TypedDict</strong> — the default; simplest, lowest overhead, no validation. <strong>Dataclass</strong> — when you want attribute access and defaults but not validation. <strong>Pydantic</strong> — when you want validation and coercion, typically at input boundaries. You can mix them: a Pydantic input schema with a TypedDict overall state is a common, practical combination.
+</Callout>
+
+<Callout type="success" title="You've mastered state">
+You now know how state is shared, read, and updated; why to return rather than mutate; how to scope input and output; and how to add defaults and validation with dataclasses and Pydantic. Next we turn to the other half of the graph: writing robust **nodes and application logic**.
+</Callout>
