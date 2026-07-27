@@ -1,0 +1,220 @@
+---
+updated: "2026-07-26"
+---
+
+This is the chapter where LangGraph clicks. We'll go through every core concept — graphs, state, nodes, edges, START and END — then see how a graph actually executes, how to compile and run it, and how to read and visualise the result. By the end you'll understand every line of a LangGraph program, which sets you up to build your own in the next chapter.
+
+## 4.1 Understanding graphs
+
+A LangGraph application is a **graph**: a set of **nodes** connected by **edges**, with a shared **state** flowing through it. Execution enters at a special `START` marker, moves from node to node along the edges, and finishes at `END`.
+
+Here is the canonical graph again — click each concept to see where it lives:
+
+<GraphAnatomy />
+
+That's the whole model. The rest of this chapter zooms in on each piece and then shows them working together. Keep this diagram in mind as we go.
+
+<Callout type="note" title="Directed, and cycles allowed">
+A LangGraph is a *directed* graph — edges have a direction. Unlike a traditional DAG, it may contain **cycles** (edges that point backwards), which is what lets an agent loop. We'll rely on that heavily later.
+</Callout>
+
+## 4.2 State
+
+The **state** is a single shared object that every node can read from and write to — the application's working memory. You define its shape with a schema, most commonly a `TypedDict`:
+
+```python
+from typing_extensions import TypedDict
+
+
+class State(TypedDict):
+    text: str
+    word_count: int
+    summary: str
+```
+
+Each key in the schema is a **channel**. When a node runs, it returns a *partial update* — a dictionary with just the channels it changed — and LangGraph merges that into the running state. Nodes never mutate the state in place; they describe what changed.
+
+<Callout type="tip" title="More on state later">
+We're keeping state simple here. Chapter 6 is devoted to it — default values, validation, Pydantic models — and reducers (custom merge rules) come in the intermediate part. For now: state is a typed dict that flows through the graph.
+</Callout>
+
+## 4.3 Nodes
+
+A **node** is a unit of work — almost always a plain Python function. It receives the current state and returns a partial update:
+
+```python
+def clean(state: State) -> dict:
+    cleaned = " ".join(state["text"].split())
+    return {"text": cleaned}
+
+
+def count(state: State) -> dict:
+    return {"word_count": len(state["text"].split())}
+```
+
+You register nodes on a `StateGraph` builder, giving each a name:
+
+```python
+from langgraph.graph import StateGraph
+
+builder = StateGraph(State)
+builder.add_node("clean", clean)
+builder.add_node("count", count)
+```
+
+Nodes can be synchronous or asynchronous (`async def`) — LangGraph handles both, and you can mix them freely. We'll go deeper on node design in Chapter 7.
+
+## 4.4 Edges
+
+**Edges** connect nodes and decide the order of execution. The simplest is a normal edge from one node to the next:
+
+```python
+builder.add_edge("clean", "count")
+```
+
+Edges can also be **conditional** — choosing the next node at run time based on the state — which is how graphs branch and loop. We'll cover conditional edges thoroughly in Chapter 8; for now, know that a plain `add_edge(a, b)` means "after `a`, run `b`."
+
+## 4.5 The START and END nodes
+
+Two special markers define where execution begins and ends. `START` is the entry point; `END` is the exit. You import them and connect your real nodes to them:
+
+```python
+from langgraph.graph import START, END
+
+builder.add_edge(START, "clean")   # entry: START → clean
+builder.add_edge("count", END)     # exit: count → END
+```
+
+`START` and `END` aren't nodes you write — they're built-in sentinels. Every graph needs at least one edge from `START` (so it knows where to begin) and a path that eventually reaches `END` (so it knows when to stop).
+
+## 4.6 Graph execution flow
+
+So how does a compiled graph actually run? LangGraph executes in **super-steps**. In each super-step it runs the node(s) that are ready, merges their state updates, then follows the edges to decide what runs next — repeating until it reaches `END`.
+
+Step through our little text-processing graph and watch the state accumulate:
+
+<ExecutionFlow />
+
+Two things to notice. First, **state accumulates**: each node adds to what previous nodes produced, rather than starting fresh. Second, **execution is orderly**: one super-step at a time, updates merged predictably. (When nodes run in parallel they share a super-step — we'll get there in the intermediate part.)
+
+## 4.7 Compiling a graph
+
+Defining nodes and edges builds a *specification*. To get something runnable, you **compile** it:
+
+```python
+graph = builder.compile()
+```
+
+Compilation validates the graph — every node is reachable, edges point somewhere valid, there's a path from `START` — and returns a `CompiledStateGraph`. If you wired something up wrong (a dangling edge, an unreachable node), you find out here rather than at run time.
+
+<Callout type="note" title="Compile is also where features attach">
+Persistence, breakpoints, and other production features are enabled at compile time — for example `builder.compile(checkpointer=...)`. We'll use those in later chapters. For now, a bare `compile()` is all we need.
+</Callout>
+
+## 4.8 Invoking a graph
+
+A compiled graph runs like any callable. The most common entry point is `invoke`, which runs the graph to completion and returns the final state:
+
+```python
+result = graph.invoke({"text": "  hello   world  "})
+```
+
+You pass the **initial state** as a dictionary. It doesn't need every channel — just the inputs your first node needs. The graph fills in the rest as it runs.
+
+There are other ways to run a graph, all sharing this interface:
+
+- `graph.stream(input)` — yields updates as each step completes (Chapter 12).
+- `graph.ainvoke(input)` / `graph.astream(input)` — async versions.
+- `graph.batch([...])` — run several inputs.
+
+## 4.9 Reading graph output
+
+`invoke` returns the **final state** — a dictionary with every channel the graph produced. Read the values you care about by key:
+
+```python
+result = graph.invoke({"text": "  hello   world  "})
+
+print(result["text"])        # "hello world"
+print(result["word_count"])  # 2
+print(result["summary"])     # "2 words"
+```
+
+For chat graphs, the output is usually a list of messages, and you read the last one:
+
+```python
+result = graph.invoke({"messages": [("user", "Hi!")]})
+print(result["messages"][-1].content)  # the assistant's reply
+```
+
+The final state is just data — a plain dict you can serialise, log, or feed into the next part of your application.
+
+## 4.10 Visualising a graph
+
+Because your application *is* a graph, LangGraph can draw it — invaluable for understanding and debugging control flow. A compiled graph can render itself:
+
+```python
+# Print a Mermaid diagram (paste into any Markdown viewer)
+print(graph.get_graph().draw_mermaid())
+
+# Or an ASCII diagram, right in your terminal
+print(graph.get_graph().draw_ascii())
+
+# Or a PNG (needs extra dependencies)
+png_bytes = graph.get_graph().draw_mermaid_png()
+```
+
+For our text-processing graph, the Mermaid output describes exactly the flow we stepped through:
+
+```text
+__start__ --> clean --> count --> summarize --> __end__
+```
+
+<Callout type="tip" title="Visualise early and often">
+When a graph misbehaves, drawing it is usually the fastest way to spot the problem — a missing edge, an unreachable node, a loop with no exit. Later we'll use **LangGraph Studio** for an interactive version of this.
+</Callout>
+
+## Putting it all together
+
+Here's the complete graph we've been building — every concept from this chapter in one runnable program:
+
+```python
+from typing_extensions import TypedDict
+from langgraph.graph import StateGraph, START, END
+
+
+class State(TypedDict):          # 4.2 state
+    text: str
+    word_count: int
+    summary: str
+
+
+def clean(state: State) -> dict:      # 4.3 nodes
+    return {"text": " ".join(state["text"].split())}
+
+
+def count(state: State) -> dict:
+    return {"word_count": len(state["text"].split())}
+
+
+def summarize(state: State) -> dict:
+    return {"summary": f"{state['word_count']} words"}
+
+
+builder = StateGraph(State)
+builder.add_node("clean", clean)
+builder.add_node("count", count)
+builder.add_node("summarize", summarize)
+
+builder.add_edge(START, "clean")      # 4.4 / 4.5 edges + START/END
+builder.add_edge("clean", "count")
+builder.add_edge("count", "summarize")
+builder.add_edge("summarize", END)
+
+graph = builder.compile()             # 4.7 compile
+result = graph.invoke({"text": "  hello   world  "})  # 4.8 invoke
+print(result["summary"])              # 4.9 read output → "2 words"
+```
+
+<Callout type="success" title="You understand LangGraph now">
+State, nodes, edges, START/END, execution, compile, invoke, output, visualise — that's the entire core. Everything else in this course is building on these ten ideas. In the next chapter you'll write your first StateGraph from scratch, step by step.
+</Callout>

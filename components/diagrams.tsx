@@ -8,6 +8,8 @@ import {
   Bot,
   Brain,
   Check,
+  ChevronLeft,
+  ChevronRight,
   Cloud,
   Code2,
   Database,
@@ -22,6 +24,7 @@ import {
   LifeBuoy,
   Play,
   RefreshCw,
+  RotateCcw,
   Search,
   ShoppingCart,
   SlidersHorizontal,
@@ -1309,6 +1312,176 @@ export function ProjectTree() {
       <figcaption className="mt-4 text-center text-xs text-ink-400">
         Click any file or folder to see what it&apos;s for.
       </figcaption>
+    </figure>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* 14. ExecutionFlow — step through a graph and watch state build up   */
+/* ------------------------------------------------------------------ */
+
+const FLOW_NODES = ["START", "clean", "count", "summarize", "END"];
+
+const FLOW_STEPS: {
+  node: string;
+  desc: string;
+  state: [string, string][];
+  changed: string[];
+}[] = [
+  {
+    node: "START",
+    desc: "Execution begins. The input you pass to the graph becomes the initial state.",
+    state: [["text", '"  hello   world  "']],
+    changed: ["text"],
+  },
+  {
+    node: "clean",
+    desc: "The clean node normalises whitespace and returns an update to the text channel.",
+    state: [["text", '"hello world"']],
+    changed: ["text"],
+  },
+  {
+    node: "count",
+    desc: "The count node reads text and returns a new word_count channel. Earlier values are kept.",
+    state: [
+      ["text", '"hello world"'],
+      ["word_count", "2"],
+    ],
+    changed: ["word_count"],
+  },
+  {
+    node: "summarize",
+    desc: "The summarize node adds a human-readable summary, reading the values the earlier nodes produced.",
+    state: [
+      ["text", '"hello world"'],
+      ["word_count", "2"],
+      ["summary", '"2 words"'],
+    ],
+    changed: ["summary"],
+  },
+  {
+    node: "END",
+    desc: "No edges remain, so the graph stops and returns the final accumulated state to the caller.",
+    state: [
+      ["text", '"hello world"'],
+      ["word_count", "2"],
+      ["summary", '"2 words"'],
+    ],
+    changed: [],
+  },
+];
+
+export function ExecutionFlow() {
+  const [i, setI] = useState(0);
+  const step = FLOW_STEPS[i];
+  const atStart = i === 0;
+  const atEnd = i === FLOW_STEPS.length - 1;
+
+  return (
+    <figure className="not-prose my-8 rounded-2xl border border-ink-200/70 bg-[rgb(var(--bg-subtle))] p-5 dark:border-ink-800/70 sm:p-6">
+      <div className="mb-4 flex items-center justify-between gap-3">
+        <span className="inline-flex items-center gap-2 text-sm font-semibold text-ink-900 dark:text-white">
+          <Play className="h-4 w-4 text-brand-500" />
+          Graph execution, step by step
+        </span>
+        <span className="font-mono text-xs text-ink-400">
+          super-step {i + 1} / {FLOW_STEPS.length}
+        </span>
+      </div>
+
+      {/* node path */}
+      <div className="flex flex-wrap items-center gap-1.5">
+        {FLOW_NODES.map((n, idx) => {
+          const isActive = n === step.node;
+          const done = FLOW_NODES.indexOf(step.node) > idx;
+          const terminal = n === "START" || n === "END";
+          return (
+            <span key={n} className="flex items-center gap-1.5">
+              <span
+                className={cn(
+                  "rounded-lg border px-2.5 py-1.5 font-mono text-xs font-medium transition-all",
+                  terminal ? "rounded-full" : "",
+                  isActive
+                    ? "border-brand-400/70 bg-brand-500/15 text-brand-700 shadow-sm dark:text-brand-200"
+                    : done
+                      ? "border-ink-200/70 bg-white/60 text-ink-400 dark:border-ink-800/70 dark:bg-ink-900/40"
+                      : "border-ink-200/70 bg-white/40 text-ink-400 opacity-60 dark:border-ink-800/70 dark:bg-ink-900/30"
+                )}
+              >
+                {n}
+              </span>
+              {idx < FLOW_NODES.length - 1 && (
+                <ArrowRight className="h-3.5 w-3.5 text-ink-300" />
+              )}
+            </span>
+          );
+        })}
+      </div>
+
+      {/* state panel */}
+      <div className="mt-4 rounded-xl border border-ink-800 bg-ink-950 p-4 font-mono text-[13px]">
+        <p className="mb-2 text-ink-500">state = {"{"}</p>
+        <div className="space-y-1 pl-4">
+          {step.state.map(([k, v]) => {
+            const isChanged = step.changed.includes(k);
+            return (
+              <div
+                key={k}
+                className={cn(
+                  "flex items-center gap-2 rounded px-1.5 py-0.5",
+                  isChanged ? "bg-brand-500/15" : ""
+                )}
+              >
+                <span className="text-sky-300">{k}</span>
+                <span className="text-ink-500">:</span>
+                <span className="text-emerald-300">{v}</span>
+                {isChanged && (
+                  <span className="ml-1 rounded bg-brand-500/25 px-1.5 text-[10px] uppercase tracking-wide text-brand-200">
+                    updated
+                  </span>
+                )}
+              </div>
+            );
+          })}
+        </div>
+        <p className="mt-2 text-ink-500">{"}"}</p>
+      </div>
+
+      <p
+        key={i}
+        className="mt-4 animate-fade-up rounded-xl border border-brand-400/20 bg-brand-500/5 p-4 text-sm leading-relaxed text-ink-700 dark:bg-brand-500/10 dark:text-ink-200"
+      >
+        <span className="font-semibold text-ink-900 dark:text-white">
+          {step.node}.
+        </span>{" "}
+        {step.desc}
+      </p>
+
+      <div className="mt-4 flex items-center gap-2">
+        <button
+          type="button"
+          onClick={() => setI((v) => Math.max(0, v - 1))}
+          disabled={atStart}
+          className="inline-flex items-center gap-1 rounded-lg border border-ink-200 px-3 py-1.5 text-sm font-medium text-ink-600 transition-colors hover:border-brand-400/50 disabled:opacity-40 dark:border-ink-700 dark:text-ink-300"
+        >
+          <ChevronLeft className="h-4 w-4" /> Back
+        </button>
+        <button
+          type="button"
+          onClick={() => setI((v) => Math.min(FLOW_STEPS.length - 1, v + 1))}
+          disabled={atEnd}
+          className="inline-flex items-center gap-1 rounded-lg bg-brand-600 px-3.5 py-1.5 text-sm font-semibold text-white transition-colors hover:bg-brand-500 disabled:opacity-40"
+        >
+          Next step <ChevronRight className="h-4 w-4" />
+        </button>
+        <button
+          type="button"
+          onClick={() => setI(0)}
+          className="ml-auto inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-medium text-ink-400 transition-colors hover:text-brand-600"
+        >
+          <RotateCcw className="h-3.5 w-3.5" /> Reset
+        </button>
+      </div>
     </figure>
   );
 }
