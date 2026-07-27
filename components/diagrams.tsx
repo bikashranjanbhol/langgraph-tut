@@ -1485,3 +1485,233 @@ export function ExecutionFlow() {
     </figure>
   );
 }
+
+/* ------------------------------------------------------------------ */
+/* 15. GraphBuilder — assemble a first StateGraph step by step         */
+/* ------------------------------------------------------------------ */
+
+const BUILD_STEPS: {
+  title: string;
+  caption: string;
+  lines: string[];
+  nodes: string[];
+  connected: boolean;
+}[] = [
+  {
+    title: "Define the state",
+    caption:
+      "Start with the shape of your data. Every channel a node reads or writes goes here.",
+    lines: [
+      "from typing_extensions import TypedDict",
+      "from langgraph.graph import StateGraph, START, END",
+      "",
+      "",
+      "class State(TypedDict):",
+      "    name: str",
+      "    message: str",
+    ],
+    nodes: [],
+    connected: false,
+  },
+  {
+    title: "Write the nodes",
+    caption:
+      "Each node is a function: it reads the state and returns a partial update.",
+    lines: [
+      "",
+      "",
+      "def greet(state: State) -> dict:",
+      '    return {"message": f"Hello, {state[\'name\']}!"}',
+      "",
+      "",
+      "def shout(state: State) -> dict:",
+      '    return {"message": state["message"].upper()}',
+    ],
+    nodes: [],
+    connected: false,
+  },
+  {
+    title: "Add the nodes to a builder",
+    caption:
+      "Create a StateGraph and register each function under a name. They exist now, but aren't wired together yet.",
+    lines: [
+      "",
+      "",
+      "builder = StateGraph(State)",
+      'builder.add_node("greet", greet)',
+      'builder.add_node("shout", shout)',
+    ],
+    nodes: ["greet", "shout"],
+    connected: false,
+  },
+  {
+    title: "Connect them with edges",
+    caption:
+      "Wire START to your first node, node to node, and the last node to END.",
+    lines: [
+      "",
+      'builder.add_edge(START, "greet")',
+      'builder.add_edge("greet", "shout")',
+      'builder.add_edge("shout", END)',
+    ],
+    nodes: ["greet", "shout"],
+    connected: true,
+  },
+  {
+    title: "Compile",
+    caption:
+      "Turn the specification into a runnable graph. This validates the wiring.",
+    lines: ["", "graph = builder.compile()"],
+    nodes: ["greet", "shout"],
+    connected: true,
+  },
+  {
+    title: "Run it",
+    caption:
+      "Invoke with an initial state. The final state comes back as a dict.",
+    lines: [
+      "",
+      'result = graph.invoke({"name": "Ada"})',
+      'print(result["message"])  # "HELLO, ADA!"',
+    ],
+    nodes: ["greet", "shout"],
+    connected: true,
+  },
+];
+
+export function GraphBuilder() {
+  const [i, setI] = useState(0);
+  const current = BUILD_STEPS[i];
+
+  // accumulate code lines up to the current step, tagged by owning step
+  const lineItems: { text: string; step: number }[] = [];
+  BUILD_STEPS.slice(0, i + 1).forEach((s, idx) =>
+    s.lines.forEach((text) => lineItems.push({ text, step: idx }))
+  );
+
+  return (
+    <figure className="not-prose my-8 rounded-2xl border border-ink-200/70 bg-[rgb(var(--bg-subtle))] p-5 dark:border-ink-800/70 sm:p-6">
+      <div className="mb-4 flex items-center justify-between gap-3">
+        <span className="inline-flex items-center gap-2 text-sm font-semibold text-ink-900 dark:text-white">
+          <Workflow className="h-4 w-4 text-brand-500" />
+          Build your first graph
+        </span>
+        <span className="font-mono text-xs text-ink-400">
+          step {i + 1} / {BUILD_STEPS.length} · {current.title}
+        </span>
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-[1.4fr_1fr]">
+        {/* accumulating code */}
+        <pre className="overflow-x-auto rounded-lg border border-ink-800 bg-ink-950 p-3.5 font-mono text-[12.5px] leading-relaxed">
+          <code className="grid">
+            {lineItems.map((item, idx) => {
+              const isCurrent = item.step === i;
+              return (
+                <span
+                  key={idx}
+                  className={cn(
+                    "-mx-3.5 border-l-2 px-3.5",
+                    isCurrent
+                      ? "border-brand-500 bg-brand-500/10 text-ink-100"
+                      : "border-transparent text-ink-400"
+                  )}
+                >
+                  {item.text || " "}
+                </span>
+              );
+            })}
+          </code>
+        </pre>
+
+        {/* growing diagram */}
+        <div className="flex flex-col justify-center rounded-lg border border-ink-200/70 bg-white/60 p-4 dark:border-ink-800/70 dark:bg-ink-900/40">
+          {current.nodes.length === 0 ? (
+            <p className="text-center text-xs text-ink-400">
+              No nodes in the graph yet.
+            </p>
+          ) : current.connected ? (
+            <div className="flex flex-col items-center gap-2">
+              <Chip label="START" terminal />
+              <Down />
+              {current.nodes.map((n, idx) => (
+                <span key={n} className="flex flex-col items-center gap-2">
+                  <Chip label={n} />
+                  {idx < current.nodes.length - 1 ? <Down /> : null}
+                </span>
+              ))}
+              <Down />
+              <Chip label="END" terminal />
+            </div>
+          ) : (
+            <div className="flex flex-col items-center gap-2">
+              <div className="flex flex-wrap justify-center gap-2">
+                {current.nodes.map((n) => (
+                  <Chip key={n} label={n} />
+                ))}
+              </div>
+              <p className="mt-1 text-center text-[11px] text-ink-400">
+                nodes added — not wired yet
+              </p>
+            </div>
+          )}
+        </div>
+      </div>
+
+      <p
+        key={i}
+        className="mt-4 animate-fade-up rounded-xl border border-brand-400/20 bg-brand-500/5 p-4 text-sm leading-relaxed text-ink-700 dark:bg-brand-500/10 dark:text-ink-200"
+      >
+        <span className="font-semibold text-ink-900 dark:text-white">
+          {current.title}.
+        </span>{" "}
+        {current.caption}
+      </p>
+
+      <div className="mt-4 flex items-center gap-2">
+        <button
+          type="button"
+          onClick={() => setI((v) => Math.max(0, v - 1))}
+          disabled={i === 0}
+          className="inline-flex items-center gap-1 rounded-lg border border-ink-200 px-3 py-1.5 text-sm font-medium text-ink-600 transition-colors hover:border-brand-400/50 disabled:opacity-40 dark:border-ink-700 dark:text-ink-300"
+        >
+          <ChevronLeft className="h-4 w-4" /> Back
+        </button>
+        <button
+          type="button"
+          onClick={() => setI((v) => Math.min(BUILD_STEPS.length - 1, v + 1))}
+          disabled={i === BUILD_STEPS.length - 1}
+          className="inline-flex items-center gap-1 rounded-lg bg-brand-600 px-3.5 py-1.5 text-sm font-semibold text-white transition-colors hover:bg-brand-500 disabled:opacity-40"
+        >
+          Next step <ChevronRight className="h-4 w-4" />
+        </button>
+        <button
+          type="button"
+          onClick={() => setI(0)}
+          className="ml-auto inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-medium text-ink-400 transition-colors hover:text-brand-600"
+        >
+          <RotateCcw className="h-3.5 w-3.5" /> Reset
+        </button>
+      </div>
+    </figure>
+  );
+}
+
+function Chip({ label, terminal }: { label: string; terminal?: boolean }) {
+  return (
+    <span
+      className={cn(
+        "border px-3 py-1.5 font-mono text-xs font-semibold",
+        terminal
+          ? "rounded-full border-brand-500/60 bg-white text-brand-600 dark:bg-ink-900 dark:text-brand-300"
+          : "rounded-lg border-brand-400/60 bg-brand-500/10 text-ink-800 dark:text-ink-100"
+      )}
+    >
+      {label}
+    </span>
+  );
+}
+
+function Down() {
+  return <span className="h-4 w-px bg-brand-400/50" aria-hidden="true" />;
+}

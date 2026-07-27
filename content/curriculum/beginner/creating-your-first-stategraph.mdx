@@ -1,0 +1,219 @@
+---
+updated: "2026-07-26"
+---
+
+You've met every core concept. Now let's put them together and build a `StateGraph` from scratch, one piece at a time. We'll start with a tiny greeting graph to nail the mechanics, then apply everything to a real text-processing workflow as this chapter's mini-project.
+
+## 5.1 Defining a state schema
+
+Every graph starts with its **state schema** — the shape of the data that flows through it. Before writing any nodes, ask: *what information does this graph carry?* Each answer becomes a channel in the schema.
+
+For a greeting graph, we need the person's name (input) and a message (what the graph produces):
+
+```python
+class State(TypedDict):
+    name: str      # input
+    message: str   # produced by the graph
+```
+
+Designing the schema first is good practice: it forces you to think about inputs, outputs, and the intermediate values your nodes will share.
+
+## 5.2 Using TypedDict for state
+
+`TypedDict` (from `typing_extensions`) is the most common way to declare state. It's a plain dictionary at run time, but with typed keys your editor and tools understand:
+
+```python
+from typing_extensions import TypedDict
+
+
+class State(TypedDict):
+    name: str
+    message: str
+```
+
+A few things worth knowing:
+
+- Keys are **channels**; their types document what each holds.
+- It's an ordinary dict at run time — no special base class or overhead.
+- You'll later annotate channels with **reducers** (`Annotated[list, add_messages]`) to control how updates merge — but that's Chapter 6. Plain types are fine for now.
+
+<Callout type="tip" title="Other schema options">
+Dataclasses and Pydantic models also work as state schemas, and Pydantic adds validation. We cover those in Chapter 6; `TypedDict` is the simplest place to start.
+</Callout>
+
+## 5.3 Writing a basic node
+
+A node is a function that takes the state and returns a **partial update** — a dict containing only the channels it changed:
+
+```python
+def greet(state: State) -> dict:
+    return {"message": f"Hello, {state['name']}!"}
+```
+
+`greet` reads `name` from the state and returns a new value for `message`. It doesn't touch `name`, so it leaves it out of the returned dict. Let's add a second node that transforms the message:
+
+```python
+def shout(state: State) -> dict:
+    return {"message": state["message"].upper()}
+```
+
+`shout` reads the `message` that `greet` produced and returns an updated one. Because both write to the same `message` channel, the later node's value wins.
+
+## 5.4 Adding nodes to a graph
+
+Create a `StateGraph` bound to your schema, then register each function with `add_node`, giving it a name:
+
+```python
+from langgraph.graph import StateGraph
+
+builder = StateGraph(State)
+builder.add_node("greet", greet)
+builder.add_node("shout", shout)
+```
+
+At this point the nodes exist in the graph, but nothing connects them — LangGraph doesn't yet know what runs first or what comes next. That's what edges are for.
+
+## 5.5 Connecting nodes with edges
+
+Wire the nodes together with `add_edge`, using the `START` and `END` markers for the entry and exit points:
+
+```python
+from langgraph.graph import START, END
+
+builder.add_edge(START, "greet")   # begin here
+builder.add_edge("greet", "shout") # then run shout
+builder.add_edge("shout", END)     # then stop
+```
+
+Read top to bottom, this says: start → `greet` → `shout` → end.
+
+## 5.6 Compiling and running the graph
+
+With nodes and edges in place, **compile** to get a runnable graph, then **invoke** it:
+
+```python
+graph = builder.compile()
+result = graph.invoke({"name": "Ada"})
+print(result["message"])  # "HELLO, ADA!"
+```
+
+Rather than just read the code, build it up yourself — step through the whole process and watch both the code and the graph take shape:
+
+<GraphBuilder />
+
+That's the entire lifecycle: **define state → write nodes → add nodes → connect edges → compile → invoke.** Every LangGraph program, no matter how large, follows this same six-step shape.
+
+## 5.7 Passing inputs to the graph
+
+The argument to `invoke` is the **initial state** — a dict of starting values. It doesn't need to include every channel, only the ones your entry node reads:
+
+```python
+graph.invoke({"name": "Ada"})     # message is filled in by the graph
+```
+
+The graph populates the remaining channels as it runs. If your entry node reads a channel that wasn't provided and has no default, you'll get a `KeyError` at run time — so make sure your inputs cover what the first node needs (we'll handle missing values gracefully in Chapter 6).
+
+## 5.8 Returning structured outputs
+
+Because the final state is just a dict, you can return as much structure as you like — several channels, nested data, or even typed objects. Simply declare the channels in your schema and have nodes populate them:
+
+```python
+class State(TypedDict):
+    name: str
+    message: str
+    length: int
+    uppercase: bool
+
+
+def analyze(state: State) -> dict:
+    return {
+        "length": len(state["message"]),
+        "uppercase": state["message"].isupper(),
+    }
+```
+
+The caller then reads a rich result: `result["length"]`, `result["uppercase"]`, and so on.
+
+<Callout type="note" title="Structured output from the model">
+When you want the *LLM itself* to return structured data (a Pydantic object, a specific JSON shape), you'll use the model's structured-output support (`model.with_structured_output(Schema)`). We introduce that alongside tools in Chapter 10.
+</Callout>
+
+## 5.9 Handling basic execution errors
+
+Graphs are code, so they can raise errors. The most common beginner mistakes:
+
+- **`KeyError`** — a node reads a channel that isn't in the state yet. Provide it as input, give it a default, or make sure an earlier node sets it.
+- **Returning the wrong type** — a node must return a `dict` (a partial update) or `None`, not a bare value. `return "hello"` will fail; `return {"message": "hello"}` is correct.
+- **Bad wiring** — an edge to a node name that doesn't exist, or no path from `START`. Compilation catches most of these.
+
+For errors *inside* a node — a failing API call, bad input — handle them where they happen and return a sensible state update instead of crashing the whole graph:
+
+```python
+def fetch(state: State) -> dict:
+    try:
+        data = call_external_api(state["query"])
+        return {"result": data, "error": None}
+    except Exception as e:
+        return {"result": None, "error": str(e)}
+```
+
+<Callout type="warning" title="Runaway loops">
+When you add loops (Chapter 8), a missing exit condition can loop forever. LangGraph guards against this with a `recursion_limit` (default 25 super-steps) and raises `GraphRecursionError` — a backstop, not a substitute for a real stopping condition.
+</Callout>
+
+## 5.10 Mini-project: Text-processing workflow
+
+Let's apply everything to something useful: a graph that cleans a piece of text, counts its words, and produces a short summary. Three nodes, wired in sequence.
+
+**The plan.** State carries the `text`, a `word_count`, and a `summary`. Node `clean` normalises whitespace, `count` counts words, and `summarize` writes a one-line summary.
+
+Step through it and watch the state accumulate as each node runs:
+
+<ExecutionFlow />
+
+Here's the complete, runnable program:
+
+```python
+from typing_extensions import TypedDict
+from langgraph.graph import StateGraph, START, END
+
+
+class State(TypedDict):
+    text: str
+    word_count: int
+    summary: str
+
+
+def clean(state: State) -> dict:
+    return {"text": " ".join(state["text"].split())}
+
+
+def count(state: State) -> dict:
+    return {"word_count": len(state["text"].split())}
+
+
+def summarize(state: State) -> dict:
+    return {"summary": f"{state['word_count']} words after cleaning."}
+
+
+builder = StateGraph(State)
+builder.add_node("clean", clean)
+builder.add_node("count", count)
+builder.add_node("summarize", summarize)
+
+builder.add_edge(START, "clean")
+builder.add_edge("clean", "count")
+builder.add_edge("count", "summarize")
+builder.add_edge("summarize", END)
+
+graph = builder.compile()
+
+result = graph.invoke({"text": "  hello   world  "})
+print(result["summary"])  # "2 words after cleaning."
+```
+
+**Try extending it.** A great way to cement this: add a `char_count` channel and have `count` return it too, or add a node that flags whether the text is a question. Each change is the same loop — update the schema, write or edit a node, adjust the edges if needed, recompile.
+
+<Callout type="success" title="You built a graph from scratch">
+You defined a schema, wrote nodes, wired edges, compiled, ran it, and read a structured result — the full workflow, end to end. Next we go deeper on **state**: defaults, validation, dataclasses, and Pydantic models.
+</Callout>
