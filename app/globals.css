@@ -75,14 +75,17 @@
 
 /* rehype-pretty-code dual theme sets --shiki-light / --shiki-dark CSS vars on
    each token span. Apply the right one for the active theme. */
+/* The fallback colors cover plaintext blocks (lang "text"), whose lines carry
+   no --shiki-* variable — without a fallback they'd inherit the typography
+   plugin's light pre color and vanish on the light code background. */
 html:not(.dark) [data-rehype-pretty-code-figure] code span {
-  color: var(--shiki-light) !important;
+  color: var(--shiki-light, #24292e) !important;
   font-style: var(--shiki-light-font-style);
   font-weight: var(--shiki-light-font-weight);
   text-decoration: var(--shiki-light-text-decoration);
 }
 .dark [data-rehype-pretty-code-figure] code span {
-  color: var(--shiki-dark) !important;
+  color: var(--shiki-dark, #adbac7) !important;
   font-style: var(--shiki-dark-font-style);
   font-weight: var(--shiki-dark-font-weight);
   text-decoration: var(--shiki-dark-text-decoration);
