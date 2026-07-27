@@ -1,0 +1,194 @@
+---
+updated: "2026-07-26"
+---
+
+With the concepts in place, let's get your machine ready to build. This chapter is hands-on: by the end you'll have a clean Python environment, LangGraph installed, a model provider configured, your secrets protected, and a project structure you'll use for the rest of the course. Follow along in a terminal.
+
+## 3.1 Python prerequisites
+
+LangGraph is a Python library, so you need a reasonably recent Python. **Python 3.9 or newer** is required; **3.11+** is recommended for better performance and clearer error messages.
+
+Check what you have:
+
+```bash
+python3 --version
+# Python 3.11.9  ← 3.9 or newer is fine
+```
+
+If it's missing or too old, install a current version from [python.org](https://www.python.org/downloads/), or via a version manager like `pyenv` (macOS/Linux) or the official installer (Windows). While you're here, make sure `pip` is current:
+
+```bash
+python3 -m pip install --upgrade pip
+```
+
+<Callout type="note" title="python vs python3">
+On macOS and Linux the command is usually `python3`; on Windows it's often just `python`. Use whichever your system provides — we'll show both where it matters.
+</Callout>
+
+## 3.2 Creating a virtual environment
+
+Never install project dependencies globally. A **virtual environment** gives each project its own isolated set of packages, so versions never clash between projects. Python's built-in `venv` is all you need:
+
+<VenvSetup />
+
+Once activated, your prompt shows `(.venv)` and every `pip install` goes into that environment. Create it in your project folder and activate it each time you open a new terminal.
+
+<Callout type="tip" title="A faster alternative: uv">
+If you'd like something faster, [`uv`](https://docs.astral.sh/uv/) is a modern, drop-in tool: `uv venv` creates an environment and `uv pip install ...` installs into it, much quicker than plain pip. Everything in this course works the same either way — use whichever you prefer.
+</Callout>
+
+## 3.3 Installing LangGraph and related packages
+
+With your environment active, install LangGraph and the packages we'll use throughout the course:
+
+```bash
+pip install -U langgraph langchain
+```
+
+You'll also want a **model provider integration** (we cover choosing one next), a **checkpointer** for persistence in later chapters, and **python-dotenv** for loading secrets:
+
+```bash
+pip install -U "langchain[anthropic]" langgraph-checkpoint-sqlite python-dotenv
+```
+
+Pin everything in a `requirements.txt` so the project is reproducible:
+
+```text
+langgraph
+langchain
+langchain-anthropic          # your model provider
+langgraph-checkpoint-sqlite  # persistence (later chapters)
+python-dotenv                # load secrets from .env
+```
+
+Then anyone can recreate the environment with `pip install -r requirements.txt`. Verify the install worked:
+
+```bash
+python -c "import langgraph; print('LangGraph', langgraph.__version__)"
+```
+
+<Callout type="tip" title="Handy dev extras">
+For local development later in the course you'll also use the LangGraph CLI and Jupyter:
+
+```bash
+pip install -U "langgraph-cli[inmem]" jupyterlab
+```
+</Callout>
+
+## 3.4 Managing environment variables
+
+Agents need secrets — chiefly your model provider's API key. **Never hardcode these in your source.** Instead, keep them in a `.env` file and load them at run time.
+
+Create a `.env` file in your project root:
+
+```bash
+# .env  — never commit this file
+ANTHROPIC_API_KEY=sk-ant-...
+```
+
+Load it at the top of your program (or notebook) with `python-dotenv`:
+
+```python
+from dotenv import load_dotenv
+
+load_dotenv()  # reads .env into environment variables
+```
+
+After `load_dotenv()`, any library that reads `ANTHROPIC_API_KEY` from the environment — including LangChain's model integrations — picks it up automatically. You can also set variables directly in your shell (`export ANTHROPIC_API_KEY=...`) if you prefer not to use a file.
+
+## 3.5 Configuring an LLM provider
+
+LangGraph is model-agnostic: it orchestrates *any* chat model. You configure a provider once, and the rest of your graph code never changes. The cleanest way to load a model is `init_chat_model`, which takes a `"provider:model"` string.
+
+Pick your provider below to see the exact install command, environment variable, and initialization line:
+
+<ProviderPicker />
+
+Putting it together, a minimal "hello model" script looks like this:
+
+```python
+from dotenv import load_dotenv
+from langchain.chat_models import init_chat_model
+
+load_dotenv()
+
+llm = init_chat_model("anthropic:claude-sonnet-5")
+print(llm.invoke("Say hello in one short sentence.").content)
+```
+
+<Callout type="success" title="Why this matters">
+Because the provider lives behind one line, you can swap Claude for GPT, Gemini, or a local model without touching a single node in your graph. This is the payoff of LangGraph's model-agnostic design.
+</Callout>
+
+## 3.6 Protecting API keys
+
+API keys are credentials that cost money and grant access to your account. Treat them like passwords.
+
+<Callout type="warning" title="Never commit secrets">
+The single most common security mistake is committing a `.env` file or a hardcoded key to Git. Once pushed, assume the key is compromised — even if you delete it later, it lives in the repository's history.
+</Callout>
+
+Add secrets to your `.gitignore` **before** your first commit:
+
+```text
+# .gitignore
+.venv/
+.env
+*.env
+__pycache__/
+.ipynb_checkpoints/
+```
+
+A few more habits that keep you safe:
+
+- **Never hardcode keys** in source, notebooks, or logs — load them from the environment.
+- **Don't print or log keys.** Be careful not to `print()` the environment or include secrets in error messages.
+- **Use least privilege.** Give each key only the scopes it needs, and use separate keys for development and production.
+- **Rotate on exposure.** If a key ever leaks, revoke it in your provider's dashboard and issue a new one.
+- **For production, use a secrets manager** (e.g. your cloud provider's) rather than `.env` files.
+
+<Callout type="tip" title="Quick audit">
+Before every `git push`, run <code>git status</code> and make sure no <code>.env</code> or key-bearing file is staged. If you use GitHub, enable secret scanning as a safety net.
+</Callout>
+
+## 3.7 Setting up notebooks and an IDE
+
+You'll write LangGraph code in two places: **notebooks** for quick experiments and **an IDE** for real modules.
+
+**Jupyter** is ideal for exploring graphs interactively — you can run a node, inspect the state, and iterate without re-running everything:
+
+```bash
+pip install -U jupyterlab
+jupyter lab
+```
+
+A convenient bonus: Jupyter supports top-level `await`, so you can call async graphs (`await graph.ainvoke(...)`) directly in a cell.
+
+**VS Code** (with the Python extension) is a great IDE for the project code. The one setup step that trips people up:
+
+<Callout type="warning" title="Select the right interpreter">
+Point your editor at the interpreter inside <code>.venv</code>, not your global Python. In VS Code: open the Command Palette → <em>Python: Select Interpreter</em> → choose the one under <code>./.venv</code>. Otherwise your editor won't see the packages you installed.
+</Callout>
+
+Any editor works — PyCharm, Neovim, and others are all fine. Later in the course we'll also use **LangGraph Studio**, a visual tool for running and debugging graphs, which we'll set up when we get to deployment.
+
+## 3.8 Creating the course project structure
+
+Finally, a place for everything. A little structure now saves a lot of refactoring later. Here's the layout we'll use throughout the course — click any item to see what it's for:
+
+<ProjectTree />
+
+The guiding principle is **separation of concerns**: state schemas, node logic, tools, and graph wiring each live in their own module rather than one giant file. This mirrors how you'll structure real LangGraph applications, and it makes your code far easier to test — a theme we'll return to often.
+
+Create the skeleton in one go:
+
+```bash
+mkdir -p langgraph-course/src langgraph-course/notebooks langgraph-course/tests
+cd langgraph-course
+touch .env .gitignore requirements.txt
+touch src/__init__.py src/config.py src/state.py src/nodes.py src/tools.py src/graph.py
+```
+
+<Callout type="success" title="You're set up">
+You now have an isolated environment, LangGraph installed, a model configured, secrets protected, and a clean project layout. Everything is in place to start building. In the next chapter we dive into LangGraph's core concepts hands-on — state, nodes, edges, and running your first graph.
+</Callout>

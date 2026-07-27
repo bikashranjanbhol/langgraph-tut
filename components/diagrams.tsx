@@ -12,8 +12,12 @@ import {
   Code2,
   Database,
   Dices,
+  Download,
   Eye,
+  FileCode,
+  Folder,
   GitBranch,
+  KeyRound,
   LayoutDashboard,
   LifeBuoy,
   Play,
@@ -1021,6 +1025,289 @@ export function StackDiagram() {
       <figcaption className="mt-4 text-center text-xs text-ink-400">
         Three independent tools that work well together — you can use any one
         without the others.
+      </figcaption>
+    </figure>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Shared: a small styled terminal-ish code block                      */
+/* ------------------------------------------------------------------ */
+
+function MiniCode({ lines }: { lines: string[] }) {
+  return (
+    <pre className="overflow-x-auto rounded-lg border border-ink-800 bg-ink-950 p-3.5 font-mono text-[13px] leading-relaxed">
+      <code className="grid">
+        {lines.map((l, i) => (
+          <span
+            key={i}
+            className={
+              l.trim().startsWith("#") ? "text-ink-500" : "text-ink-100"
+            }
+          >
+            {l || " "}
+          </span>
+        ))}
+      </code>
+    </pre>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* 11. VenvSetup — OS-aware virtual environment commands               */
+/* ------------------------------------------------------------------ */
+
+const VENV_TABS = [
+  {
+    id: "unix",
+    label: "macOS / Linux",
+    lines: [
+      "# create the environment",
+      "python3 -m venv .venv",
+      "# activate it",
+      "source .venv/bin/activate",
+    ],
+  },
+  {
+    id: "win",
+    label: "Windows (PowerShell)",
+    lines: [
+      "# create the environment",
+      "python -m venv .venv",
+      "# activate it",
+      ".venv\\Scripts\\Activate.ps1",
+    ],
+  },
+] as const;
+
+export function VenvSetup() {
+  const [tab, setTab] = useState<string>("unix");
+  const active = VENV_TABS.find((t) => t.id === tab) ?? VENV_TABS[0];
+
+  return (
+    <figure className="not-prose my-8 rounded-2xl border border-ink-200/70 bg-[rgb(var(--bg-subtle))] p-5 dark:border-ink-800/70 sm:p-6">
+      <span className="mb-4 inline-flex items-center gap-2 text-sm font-semibold text-ink-900 dark:text-white">
+        <Terminal className="h-4 w-4 text-brand-500" />
+        Create &amp; activate a virtual environment
+      </span>
+
+      <div className="mb-3 inline-flex rounded-xl border border-ink-200 bg-white/70 p-1 dark:border-ink-700 dark:bg-ink-900/60">
+        {VENV_TABS.map((t) => (
+          <button
+            key={t.id}
+            type="button"
+            onClick={() => setTab(t.id)}
+            className={cn(
+              "rounded-lg px-3.5 py-1.5 text-sm font-medium transition-colors",
+              tab === t.id
+                ? "bg-brand-600 text-white shadow-sm"
+                : "text-ink-500 hover:text-ink-800 dark:text-ink-400 dark:hover:text-ink-100"
+            )}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      <MiniCode lines={[...active.lines]} />
+      <figcaption className="mt-3 text-xs text-ink-400">
+        Your prompt now shows <code className="font-mono">(.venv)</code>. Run{" "}
+        <code className="font-mono">deactivate</code> to exit.
+      </figcaption>
+    </figure>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* 12. ProviderPicker — install + env var + init line per provider     */
+/* ------------------------------------------------------------------ */
+
+const PROVIDERS = [
+  {
+    id: "anthropic",
+    label: "Anthropic (Claude)",
+    install: 'pip install -U "langchain[anthropic]"',
+    env: "ANTHROPIC_API_KEY",
+    model: "anthropic:claude-sonnet-5",
+    note: null as string | null,
+  },
+  {
+    id: "openai",
+    label: "OpenAI",
+    install: 'pip install -U "langchain[openai]"',
+    env: "OPENAI_API_KEY",
+    model: "openai:gpt-4o",
+    note: null,
+  },
+  {
+    id: "google",
+    label: "Google Gemini",
+    install: 'pip install -U "langchain[google-genai]"',
+    env: "GOOGLE_API_KEY",
+    model: "google_genai:gemini-2.0-flash",
+    note: null,
+  },
+  {
+    id: "ollama",
+    label: "Ollama (local)",
+    install: "pip install -U langchain-ollama",
+    env: "— no key needed",
+    model: "ollama:llama3.1",
+    note: "Runs models locally via Ollama — no API key required.",
+  },
+] as const;
+
+export function ProviderPicker() {
+  const [id, setId] = useState<string>("anthropic");
+  const p = PROVIDERS.find((x) => x.id === id) ?? PROVIDERS[0];
+
+  return (
+    <figure className="not-prose my-8 rounded-2xl border border-ink-200/70 bg-[rgb(var(--bg-subtle))] p-5 dark:border-ink-800/70 sm:p-6">
+      <span className="mb-4 inline-flex items-center gap-2 text-sm font-semibold text-ink-900 dark:text-white">
+        <Sparkles className="h-4 w-4 text-brand-500" />
+        Configure your model provider
+      </span>
+
+      <div className="mb-4 flex flex-wrap gap-2">
+        {PROVIDERS.map((x) => (
+          <button
+            key={x.id}
+            type="button"
+            onClick={() => setId(x.id)}
+            className={cn(
+              "rounded-lg border px-3 py-1.5 text-sm font-medium transition-all",
+              id === x.id
+                ? "border-brand-400/70 bg-brand-500/10 text-brand-700 dark:text-brand-200"
+                : "border-ink-200/70 bg-white/60 text-ink-500 hover:border-brand-400/40 dark:border-ink-800/70 dark:bg-ink-900/40 dark:text-ink-400"
+            )}
+          >
+            {x.label}
+          </button>
+        ))}
+      </div>
+
+      <div key={id} className="animate-fade-up space-y-4">
+        <div>
+          <p className="mb-1.5 inline-flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-ink-400">
+            <Download className="h-3.5 w-3.5" /> 1. Install
+          </p>
+          <MiniCode lines={[p.install]} />
+        </div>
+        <div>
+          <p className="mb-1.5 inline-flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-ink-400">
+            <KeyRound className="h-3.5 w-3.5" /> 2. Set your API key
+          </p>
+          {p.note ? (
+            <p className="rounded-lg border border-ink-200/70 bg-white/60 p-3 text-sm text-ink-600 dark:border-ink-800/70 dark:bg-ink-900/40 dark:text-ink-300">
+              {p.note}
+            </p>
+          ) : (
+            <MiniCode lines={[`export ${p.env}="sk-..."`]} />
+          )}
+        </div>
+        <div>
+          <p className="mb-1.5 inline-flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-ink-400">
+            <Code2 className="h-3.5 w-3.5" /> 3. Initialise the model
+          </p>
+          <MiniCode
+            lines={[
+              "from langchain.chat_models import init_chat_model",
+              "",
+              `llm = init_chat_model("${p.model}")`,
+            ]}
+          />
+        </div>
+      </div>
+      <figcaption className="mt-4 text-center text-xs text-ink-400">
+        Pick a provider — the rest of the course code stays identical.
+      </figcaption>
+    </figure>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* 13. ProjectTree — clickable recommended project structure           */
+/* ------------------------------------------------------------------ */
+
+const TREE: {
+  d: number;
+  name: string;
+  kind: "folder" | "file";
+  desc: string;
+}[] = [
+  { d: 0, name: "langgraph-course/", kind: "folder", desc: "The project root — everything lives here." },
+  { d: 1, name: ".venv/", kind: "folder", desc: "Your virtual environment. Machine-specific — never commit it." },
+  { d: 1, name: ".env", kind: "file", desc: "API keys and secrets. Listed in .gitignore — never commit it." },
+  { d: 1, name: ".gitignore", kind: "file", desc: "Keeps .venv/ and .env out of version control." },
+  { d: 1, name: "requirements.txt", kind: "file", desc: "Pinned dependencies so the project is reproducible." },
+  { d: 1, name: "src/", kind: "folder", desc: "Your application code, split by responsibility." },
+  { d: 2, name: "config.py", kind: "file", desc: "Loads environment variables and configures the model." },
+  { d: 2, name: "state.py", kind: "file", desc: "State schemas (TypedDict / Pydantic) for your graphs." },
+  { d: 2, name: "nodes.py", kind: "file", desc: "Node functions — the units of work in your graph." },
+  { d: 2, name: "tools.py", kind: "file", desc: "Tool definitions the agent can call." },
+  { d: 2, name: "graph.py", kind: "file", desc: "Builds, wires, and compiles the graph." },
+  { d: 1, name: "notebooks/", kind: "folder", desc: "Jupyter notebooks for interactive exploration." },
+  { d: 2, name: "explore.ipynb", kind: "file", desc: "A scratchpad to try graphs step by step." },
+  { d: 1, name: "tests/", kind: "folder", desc: "Automated tests for your nodes and graphs." },
+  { d: 2, name: "test_graph.py", kind: "file", desc: "Unit tests that keep the graph honest." },
+];
+
+export function ProjectTree() {
+  const [sel, setSel] = useState<number>(5);
+  const active = TREE[sel];
+
+  return (
+    <figure className="not-prose my-8 rounded-2xl border border-ink-200/70 bg-[rgb(var(--bg-subtle))] p-5 dark:border-ink-800/70 sm:p-6">
+      <span className="mb-4 inline-flex items-center gap-2 text-sm font-semibold text-ink-900 dark:text-white">
+        <Folder className="h-4 w-4 text-brand-500" />
+        Recommended project structure
+      </span>
+
+      <div className="grid gap-4 lg:grid-cols-[1fr_1fr]">
+        <div className="rounded-xl border border-ink-200/70 bg-ink-950 p-2 dark:border-ink-800/70">
+          {TREE.map((row, i) => {
+            const Icon = row.kind === "folder" ? Folder : FileCode;
+            return (
+              <button
+                key={i}
+                type="button"
+                onClick={() => setSel(i)}
+                style={{ paddingLeft: `${row.d * 18 + 10}px` }}
+                className={cn(
+                  "flex w-full items-center gap-2 rounded-md py-1.5 pr-2 text-left font-mono text-[13px] transition-colors",
+                  sel === i
+                    ? "bg-brand-500/20 text-white"
+                    : "text-ink-300 hover:bg-white/5"
+                )}
+              >
+                <Icon
+                  className={cn(
+                    "h-3.5 w-3.5 shrink-0",
+                    row.kind === "folder"
+                      ? "text-brand-400"
+                      : "text-ink-500"
+                  )}
+                />
+                {row.name}
+              </button>
+            );
+          })}
+        </div>
+
+        <div
+          key={sel}
+          className="animate-fade-up self-start rounded-xl border border-brand-400/20 bg-brand-500/5 p-4 dark:bg-brand-500/10"
+        >
+          <p className="font-mono text-sm font-semibold text-ink-900 dark:text-white">
+            {active.name}
+          </p>
+          <p className="mt-1.5 text-sm leading-relaxed text-ink-600 dark:text-ink-300">
+            {active.desc}
+          </p>
+        </div>
+      </div>
+      <figcaption className="mt-4 text-center text-xs text-ink-400">
+        Click any file or folder to see what it&apos;s for.
       </figcaption>
     </figure>
   );

@@ -10,8 +10,11 @@ import {
   GraphAnatomy,
   LlmVsAgent,
   OrchestrationDiagram,
+  ProjectTree,
+  ProviderPicker,
   StackDiagram,
   UseCaseGrid,
+  VenvSetup,
   WhenToUse,
 } from "@/components/diagrams";
 
@@ -119,7 +122,10 @@ export const mdxComponents: MDXComponents = {
   GraphAnatomy,
   LlmVsAgent,
   OrchestrationDiagram,
+  ProjectTree,
+  ProviderPicker,
   StackDiagram,
   UseCaseGrid,
+  VenvSetup,
   WhenToUse,
 };
