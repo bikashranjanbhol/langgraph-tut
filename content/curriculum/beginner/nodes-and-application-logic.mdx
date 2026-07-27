@@ -1,0 +1,187 @@
+---
+updated: "2026-07-26"
+---
+
+If state is what flows through a graph, **nodes** are where the work happens. This chapter is a thorough look at writing them well: sync and async, pure functions versus side effects, calling models, constructing prompts, getting structured responses, calling into your own code, naming, and handling errors. Good nodes make for graphs that are easy to test, debug, and trust.
+
+## 7.1 Anatomy of a node
+
+Every node follows the same shape: it's a function that **receives the state**, **does some work**, and **returns a partial update**. Click through the pieces:
+
+<NodeAnatomy />
+
+That's the entire contract. A node doesn't know about the rest of the graph — it just transforms state. This is what keeps nodes composable: you can test one in isolation by calling it with a plain dict and checking what it returns.
+
+<Callout type="note" title="Nodes can receive more than state">
+Besides `state`, a node can optionally accept a `config` (or runtime) argument to reach request-scoped values like a `thread_id` or injected dependencies. We'll use that in later chapters; for now, `(state) -> dict` is all you need.
+</Callout>
+
+## 7.2 Synchronous nodes
+
+The simplest node is an ordinary synchronous function. It runs to completion before the graph moves on:
+
+```python
+def clean(state: State) -> dict:
+    return {"text": " ".join(state["text"].split())}
+```
+
+Synchronous nodes are perfect for CPU-bound work and simple logic. The trade-off: while a sync node waits on I/O (a network call, a database query), it blocks. For I/O-heavy work, async is often better.
+
+## 7.3 Asynchronous nodes
+
+Define a node with `async def` when it awaits I/O — model calls, HTTP requests, database queries. LangGraph awaits it for you:
+
+```python
+async def generate(state: State) -> dict:
+    response = await llm.ainvoke(state["messages"])
+    return {"messages": [response]}
+```
+
+To run a graph that contains async nodes, use the async entry points: `await graph.ainvoke(...)` or `graph.astream(...)`. You can freely **mix** sync and async nodes in the same graph.
+
+<Callout type="tip" title="When to reach for async">
+Async shines when nodes wait on external services, and especially when branches run in parallel — several awaited calls can overlap instead of running one after another. For a quick script or CPU-bound logic, plain sync nodes are simpler.
+</Callout>
+
+## 7.4 Pure functions and side effects
+
+A **pure** function's output depends only on its input, and it changes nothing else. Pure nodes are the easiest to test and reason about, so prefer them where you can.
+
+But real nodes often have **side effects** — calling an API, writing to a database, sending an email. That's expected. The thing to be careful about is that LangGraph can **re-run** nodes: on resume, replay, or retry (features we'll meet in the persistence and durable-execution chapters). If a node isn't safe to run twice, that's a bug.
+
+<Callout type="warning" title="Make side effects replay-safe">
+Because a node may execute more than once, side effects should be <strong>idempotent</strong> where possible (e.g. an upsert instead of a blind insert), or guarded so a repeat is harmless. Never assume a node runs exactly once.
+</Callout>
+
+A good pattern: keep the risky side effect small and explicit, and keep the surrounding logic pure.
+
+## 7.5 Calling an LLM inside a node
+
+Most interesting nodes call a model. Initialize the model once (at module level, not inside the node), then invoke it in the node:
+
+```python
+from langchain.chat_models import init_chat_model
+
+llm = init_chat_model("anthropic:claude-sonnet-5")
+
+
+def answer(state: State) -> dict:
+    response = llm.invoke(state["messages"])
+    return {"messages": [response]}
+```
+
+`llm.invoke` accepts a message list (or a plain string) and returns an `AIMessage`. Return it under the channel your graph uses — commonly `messages`, which we cover in the next chapter.
+
+## 7.6 Prompt construction
+
+The quality of a node's output depends heavily on the prompt you build. Construct it from the state, usually as a list of messages — a system instruction plus the user content:
+
+```python
+def answer(state: State) -> dict:
+    messages = [
+        ("system", "You are a concise, helpful assistant."),
+        ("user", state["question"]),
+    ]
+    return {"answer": llm.invoke(messages).content}
+```
+
+For anything reusable, a `ChatPromptTemplate` keeps prompts tidy and fillable:
+
+```python
+from langchain_core.prompts import ChatPromptTemplate
+
+prompt = ChatPromptTemplate.from_messages([
+    ("system", "You summarize text in one sentence."),
+    ("user", "{text}"),
+])
+
+
+def summarize(state: State) -> dict:
+    messages = prompt.invoke({"text": state["text"]})
+    return {"summary": llm.invoke(messages).content}
+```
+
+<Callout type="tip" title="Keep prompts close to the node">
+Build the prompt where it's used, from the state the node has. This keeps each node self-contained and makes prompts easy to tweak and test one at a time.
+</Callout>
+
+## 7.7 Structured model responses
+
+Free-form text is hard to act on programmatically. When you need specific fields — a category, a score, extracted data — ask the model for **structured output**. Define the shape with Pydantic and bind it with `with_structured_output`:
+
+```python
+from pydantic import BaseModel, Field
+
+
+class Analysis(BaseModel):
+    sentiment: str = Field(description="positive, negative, or neutral")
+    confidence: float = Field(description="0.0 to 1.0")
+
+
+structured_llm = llm.with_structured_output(Analysis)
+
+
+def analyze(state: State) -> dict:
+    result = structured_llm.invoke(state["text"])
+    return {"sentiment": result.sentiment, "confidence": result.confidence}
+```
+
+Now `result` is a validated `Analysis` object, not a string to parse. Structured output is the reliable way to get machine-usable data out of a model, and you'll lean on it constantly — for routing decisions, extraction, and grading.
+
+## 7.8 Calling external Python functions
+
+Nodes are ordinary Python, so they can call anything: your database layer, an internal REST API, a pricing calculator, a search client. The key habit is to **keep orchestration separate from business logic**. Write your real logic as plain functions and *call* them from thin nodes:
+
+```python
+# business logic — plain, testable Python
+def search_catalog(query: str) -> list[dict]:
+    ...
+
+# node — thin adapter between state and logic
+def retrieve(state: State) -> dict:
+    results = search_catalog(state["query"])
+    return {"results": results}
+```
+
+This separation pays off everywhere: your business logic can be unit-tested without a graph, reused across nodes, and swapped out without touching the graph structure.
+
+## 7.9 Node naming conventions
+
+Node names aren't just labels — they appear in your **edges**, **traces**, **streaming metadata**, and **graph visualizations**. Clear names make all of those readable.
+
+- Use **verbs** that say what the node does: `retrieve`, `generate`, `grade`, `route`, `summarize`.
+- Use consistent **snake_case**.
+- Be specific: `fetch_user_orders` beats `node2`.
+
+```python
+builder.add_node("retrieve", retrieve)
+builder.add_node("grade_documents", grade_documents)
+builder.add_node("generate_answer", generate_answer)
+```
+
+When you later read a trace or watch a graph stream, well-named nodes tell the story of what happened at a glance.
+
+## 7.10 Error handling inside nodes
+
+Nodes fail — a model times out, an API returns an error, input is malformed. Decide deliberately what should happen, rather than letting an exception crash the whole graph.
+
+The most common pattern is to **catch the error and record it in the state**, so a later node (or a conditional edge) can react:
+
+```python
+def fetch(state: State) -> dict:
+    try:
+        data = external_api(state["query"])
+        return {"result": data, "error": None}
+    except Exception as e:
+        return {"result": None, "error": str(e)}
+```
+
+You then route on the `error` channel — retry, fall back, or escalate — which we'll wire up with conditional edges in the next chapter. Sometimes the right choice is the opposite: **let it raise** and stop the graph, so a genuine failure isn't silently swallowed.
+
+<Callout type="note" title="Errors, retries, and durability">
+For transient failures you'll often want automatic retries with backoff, and for long-running graphs you'll want failures to be recoverable from a checkpoint. Those are the subjects of the reliability and durable-execution chapters — this section is the foundation they build on.
+</Callout>
+
+<Callout type="success" title="You can write real nodes now">
+You know the anatomy of a node, when to go async, how to keep side effects safe, how to call models and get structured output, how to separate logic from orchestration, and how to handle failure. Next we connect nodes together with real control flow: <strong>edges, branching, and loops</strong>.
+</Callout>

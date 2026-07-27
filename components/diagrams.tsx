@@ -1934,3 +1934,105 @@ export function StateScopes() {
     </figure>
   );
 }
+
+/* ------------------------------------------------------------------ */
+/* 18. NodeAnatomy — dissect a node function part by part              */
+/* ------------------------------------------------------------------ */
+
+const NODE_LINES: { text: string; part: string }[] = [
+  { text: "def summarize(state: State) -> dict:", part: "signature" },
+  { text: '    text = state["text"]', part: "read" },
+  { text: '    prompt = f"Summarize this:\\n\\n{text}"', part: "work" },
+  { text: "    response = llm.invoke(prompt)", part: "work" },
+  { text: '    return {"summary": response.content}', part: "return" },
+];
+
+const NODE_PARTS = [
+  {
+    key: "signature",
+    label: "Signature",
+    desc: "A node is just a function. It receives the current state and is annotated to return a dict — a partial update. The name you give it in add_node() is how edges refer to it.",
+  },
+  {
+    key: "read",
+    label: "Read state",
+    desc: "Read the channels you need from the state. With a TypedDict that's dictionary access; use .get() when a value might be missing.",
+  },
+  {
+    key: "work",
+    label: "Do the work",
+    desc: "The body does the real work — build a prompt, call a model, run a tool, or compute a value. This is where your application logic lives.",
+  },
+  {
+    key: "return",
+    label: "Return an update",
+    desc: "Return a dict of only the channels you changed. LangGraph merges it into the state and follows the edges to the next node.",
+  },
+] as const;
+
+export function NodeAnatomy() {
+  const [sel, setSel] = useState<string>("signature");
+  const active = NODE_PARTS.find((p) => p.key === sel) ?? NODE_PARTS[0];
+
+  return (
+    <figure className="not-prose my-8 rounded-2xl border border-ink-200/70 bg-[rgb(var(--bg-subtle))] p-5 dark:border-ink-800/70 sm:p-6">
+      <span className="mb-4 inline-flex items-center gap-2 text-sm font-semibold text-ink-900 dark:text-white">
+        <Code2 className="h-4 w-4 text-brand-500" />
+        Anatomy of a node
+      </span>
+
+      <pre className="overflow-x-auto rounded-lg border border-ink-800 bg-ink-950 p-3.5 font-mono text-[13px] leading-relaxed">
+        <code className="grid">
+          {NODE_LINES.map((line, idx) => {
+            const on = line.part === sel;
+            return (
+              <span
+                key={idx}
+                onMouseEnter={() => setSel(line.part)}
+                className={cn(
+                  "-mx-3.5 cursor-pointer border-l-2 px-3.5 transition-colors",
+                  on
+                    ? "border-brand-500 bg-brand-500/15 text-ink-100"
+                    : "border-transparent text-ink-400 hover:bg-white/5"
+                )}
+              >
+                {line.text}
+              </span>
+            );
+          })}
+        </code>
+      </pre>
+
+      <div className="mt-4 flex flex-wrap gap-2">
+        {NODE_PARTS.map((p) => (
+          <button
+            key={p.key}
+            type="button"
+            onClick={() => setSel(p.key)}
+            className={cn(
+              "rounded-lg border px-3 py-1.5 text-xs font-medium transition-all",
+              sel === p.key
+                ? "border-brand-400/70 bg-brand-500/10 text-brand-700 dark:text-brand-200"
+                : "border-ink-200/70 bg-white/60 text-ink-500 hover:border-brand-400/40 dark:border-ink-800/70 dark:bg-ink-900/40 dark:text-ink-400"
+            )}
+          >
+            {p.label}
+          </button>
+        ))}
+      </div>
+
+      <p
+        key={sel}
+        className="mt-4 animate-fade-up rounded-xl border border-brand-400/20 bg-brand-500/5 p-4 text-sm leading-relaxed text-ink-700 dark:bg-brand-500/10 dark:text-ink-200"
+      >
+        <span className="font-semibold text-ink-900 dark:text-white">
+          {active.label}.
+        </span>{" "}
+        {active.desc}
+      </p>
+      <figcaption className="mt-3 text-center text-xs text-ink-400">
+        Hover or click a line to dissect the node.
+      </figcaption>
+    </figure>
+  );
+}
