@@ -1,0 +1,215 @@
+---
+updated: "2026-07-26"
+---
+
+Almost every LLM application is a conversation, and LangGraph has first-class support for modelling one. This chapter covers the message types, the prebuilt `MessagesState`, the `add_messages` reducer that keeps a history, and how to handle long conversations without blowing past the context window. We finish by building a stateful support chatbot that actually remembers.
+
+## 9.1 Human, AI, system, and tool messages
+
+A conversation is a list of **messages**, and each message has a **role**. LangChain (which LangGraph builds on) represents them with four classes. Explore each:
+
+<MessageTypes />
+
+You'll usually import them from `langchain_core.messages`:
+
+```python
+from langchain_core.messages import (
+    SystemMessage, HumanMessage, AIMessage, ToolMessage,
+)
+```
+
+For convenience, LangGraph also accepts plain `(role, content)` tuples and dicts as input and converts them for you — `("user", "Hi!")` becomes a `HumanMessage`. The model always returns proper `AIMessage` objects.
+
+## 9.2 Understanding MessagesState
+
+Because "a list of messages" is such a common state shape, LangGraph ships a prebuilt schema for it: `MessagesState`. It's just a `TypedDict` with a single channel — `messages` — already set up with the right reducer:
+
+```python
+from langgraph.graph import MessagesState
+
+# MessagesState is roughly equivalent to:
+# class MessagesState(TypedDict):
+#     messages: Annotated[list, add_messages]
+```
+
+Use it directly, or subclass it to add your own channels alongside the conversation:
+
+```python
+class State(MessagesState):
+    user_name: str
+    resolved: bool
+```
+
+## 9.3 Adding messages to state
+
+The magic is in that `add_messages` reducer. Recall from Chapter 6 that the default reducer *overwrites* a channel. `add_messages` instead **appends** — so returning a new message adds it to the history rather than replacing everything:
+
+```python
+def chatbot(state: MessagesState) -> dict:
+    response = llm.invoke(state["messages"])
+    return {"messages": [response]}   # appended, not overwritten
+```
+
+`add_messages` does more than a naive append: it converts tuples/dicts into message objects, and it's **ID-aware** — if you return a message whose ID matches an existing one, it *updates* that message in place instead of duplicating it. That's what makes streaming and message edits work cleanly.
+
+## 9.4 Maintaining conversation history
+
+Because every node's messages are appended, the `messages` channel naturally accumulates the whole conversation as the graph runs. Each turn, you add the user's message and the assistant's reply, and the list grows:
+
+```python
+# after several turns, state["messages"] looks like:
+# [HumanMessage("Hi"), AIMessage("Hello!"),
+#  HumanMessage("What's the weather?"), AIMessage("...")]
+```
+
+Within a single `invoke`, this happens automatically. To keep history *across* separate `invoke` calls — a real multi-turn chat — you either pass the accumulated messages back in yourself, or let a **checkpointer** persist them for you (Chapter 11, and we'll use it in this chapter's mini-project).
+
+## 9.5 Creating a basic chatbot graph
+
+With `MessagesState`, a chatbot is astonishingly small — one node that calls the model:
+
+```python
+from langchain.chat_models import init_chat_model
+from langgraph.graph import StateGraph, MessagesState, START, END
+
+llm = init_chat_model("anthropic:claude-sonnet-5")
+
+
+def chatbot(state: MessagesState) -> dict:
+    return {"messages": [llm.invoke(state["messages"])]}
+
+
+builder = StateGraph(MessagesState)
+builder.add_node("chatbot", chatbot)
+builder.add_edge(START, "chatbot")
+builder.add_edge("chatbot", END)
+graph = builder.compile()
+
+result = graph.invoke({"messages": [("user", "Hello!")]})
+print(result["messages"][-1].content)
+```
+
+`result["messages"][-1]` is the latest message — the assistant's reply. That's the pattern for reading a chatbot's output.
+
+## 9.6 System instructions
+
+To shape the assistant's behaviour, give it a **system message**. The clean way is to prepend it when you call the model, so it guides every turn without cluttering the stored history:
+
+```python
+SYSTEM = "You are a concise, friendly support assistant for Acme Corp."
+
+
+def chatbot(state: MessagesState) -> dict:
+    messages = [("system", SYSTEM), *state["messages"]]
+    return {"messages": [llm.invoke(messages)]}
+```
+
+Here the system instruction is added at call time and isn't appended to state, so it doesn't accumulate. (You *can* store it as the first message instead — either works; prepending keeps the history focused on the actual conversation.)
+
+## 9.7 Multi-turn conversations
+
+A real conversation spans many turns. Since `invoke` is stateless by default, you must carry the history forward — pass the previous messages back in with each new turn:
+
+```python
+history = []
+history += [("user", "My name is Ada.")]
+out = graph.invoke({"messages": history})
+history = out["messages"]                      # includes the reply
+
+history += [("user", "What's my name?")]
+out = graph.invoke({"messages": history})
+print(out["messages"][-1].content)             # "Your name is Ada."
+```
+
+Managing `history` by hand is tedious and error-prone. That's exactly what checkpointers automate — which is how the mini-project below keeps state for you.
+
+## 9.8 Managing long conversations
+
+Left unchecked, history grows forever. That costs money (you resend every message each turn), adds latency, and eventually overflows the model's context window. Watch it happen, and try the fixes:
+
+<ContextWindow />
+
+Two standard strategies:
+
+- **Trim** — keep only the most recent messages. LangChain's `trim_messages` helps:
+
+  ```python
+  from langchain_core.messages import trim_messages
+
+  def chatbot(state: MessagesState) -> dict:
+      recent = trim_messages(
+          state["messages"], max_tokens=2000, strategy="last",
+          token_counter=llm,
+      )
+      return {"messages": [llm.invoke(recent)]}
+  ```
+
+- **Summarize** — condense older turns into a short recap and keep only that plus the latest messages. This preserves context far more cheaply than keeping everything.
+
+To actually *drop* messages from the stored state (not just from the model call), return a `RemoveMessage` for each one you want gone — `add_messages` understands it:
+
+```python
+from langchain_core.messages import RemoveMessage
+
+def prune(state: MessagesState) -> dict:
+    old = state["messages"][:-6]   # everything but the last 6
+    return {"messages": [RemoveMessage(id=m.id) for m in old]}
+```
+
+## 9.9 Basic context-window awareness
+
+Every model has a maximum **context window** — the total tokens it can consider at once. Your entire prompt (system instructions + full history + the space needed for the reply) must fit inside it. A few habits keep you safe:
+
+- **Know your budget.** Check your model's context limit, and remember the *output* needs room too.
+- **Count, don't guess.** Use a token counter to measure history size rather than eyeballing message count.
+- **Prune proactively.** Trim or summarize *before* you're near the limit, not after you hit an error.
+
+<Callout type="warning" title="Message count ≠ token count">
+Ten short messages might be 200 tokens; two long ones might be 5,000. Always budget by tokens, not by number of messages — a single pasted document can blow the window on its own.
+</Callout>
+
+## 9.10 Mini-project: Stateful support chatbot
+
+Let's build a support chatbot that remembers the conversation across turns. The statefulness comes from a **checkpointer** plus a **thread id** — we'll introduce them lightly here (Chapter 11 goes deep).
+
+```python
+from langchain.chat_models import init_chat_model
+from langgraph.graph import StateGraph, MessagesState, START, END
+from langgraph.checkpoint.memory import MemorySaver
+
+llm = init_chat_model("anthropic:claude-sonnet-5")
+
+SYSTEM = (
+    "You are a friendly, concise support assistant for Acme Corp. "
+    "If you don't know an answer, say so and offer to escalate."
+)
+
+
+def chatbot(state: MessagesState) -> dict:
+    messages = [("system", SYSTEM), *state["messages"]]
+    return {"messages": [llm.invoke(messages)]}
+
+
+builder = StateGraph(MessagesState)
+builder.add_node("chatbot", chatbot)
+builder.add_edge(START, "chatbot")
+builder.add_edge("chatbot", END)
+
+# A checkpointer makes the graph remember each conversation.
+graph = builder.compile(checkpointer=MemorySaver())
+
+# A thread_id identifies one conversation.
+config = {"configurable": {"thread_id": "customer-123"}}
+
+graph.invoke({"messages": [("user", "Hi, my order 42 hasn't arrived.")]}, config)
+out = graph.invoke({"messages": [("user", "What order number did I mention?")]}, config)
+print(out["messages"][-1].content)   # references order 42 — it remembered
+```
+
+Notice we only send the *new* message each turn — the checkpointer restores the prior history for that `thread_id` and `add_messages` appends to it. That's a genuinely stateful chatbot in about twenty lines.
+
+**Try extending it.** Add a `trim_messages` step to cap history length, subclass `MessagesState` to track whether the issue was `resolved`, or add a system instruction that changes tone based on a `user_name` channel.
+
+<Callout type="success" title="You can build conversations now">
+Message types, <code>MessagesState</code>, the <code>add_messages</code> reducer, system instructions, multi-turn history, and context management — you have everything to build a real chatbot. Next we give it hands: <strong>tools and tool-calling agents</strong>.
+</Callout>

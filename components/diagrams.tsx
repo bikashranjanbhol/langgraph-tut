@@ -18,20 +18,24 @@ import {
   Eye,
   FileCode,
   Folder,
+  Gauge,
   GitBranch,
   GitMerge,
   KeyRound,
   Layers,
   LayoutDashboard,
   LifeBuoy,
+  MessageSquare,
   Play,
   RefreshCw,
   RotateCcw,
   Search,
+  Settings,
   ShoppingCart,
   SlidersHorizontal,
   Sparkles,
   Terminal,
+  User,
   UserCheck,
   Workflow,
   Wrench,
@@ -2247,6 +2251,208 @@ export function LoopStepper() {
         The routing function returns <code className="font-mono">END</code> once
         the score clears the threshold — otherwise it loops back. The max-attempts
         guard (and LangGraph&apos;s recursion limit) prevent an infinite loop.
+      </figcaption>
+    </figure>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* 21. MessageTypes — explore the four message roles                   */
+/* ------------------------------------------------------------------ */
+
+const MESSAGE_ROLES = [
+  {
+    key: "system",
+    label: "System",
+    icon: Settings,
+    cls: "SystemMessage",
+    example: "You are a friendly support assistant for Acme Corp.",
+    desc: "Sets the assistant's behaviour and ground rules. Usually comes first, and is hidden from the end user.",
+  },
+  {
+    key: "human",
+    label: "Human",
+    icon: User,
+    cls: "HumanMessage",
+    example: "How do I reset my password?",
+    desc: "A message from the user — their question or instruction.",
+  },
+  {
+    key: "ai",
+    label: "AI",
+    icon: Bot,
+    cls: "AIMessage",
+    example: "Go to Settings → Security → Reset password.",
+    desc: "The model's reply. It can contain text, tool calls, or both.",
+  },
+  {
+    key: "tool",
+    label: "Tool",
+    icon: Wrench,
+    cls: "ToolMessage",
+    example: '{"status": "reset_link_sent"}',
+    desc: "The result of a tool the AI asked to run, fed back so the model can use it.",
+  },
+] as const;
+
+export function MessageTypes() {
+  const [sel, setSel] = useState<string>("system");
+  const role = MESSAGE_ROLES.find((r) => r.key === sel) ?? MESSAGE_ROLES[0];
+  const Icon = role.icon;
+
+  return (
+    <figure className="not-prose my-8 rounded-2xl border border-ink-200/70 bg-[rgb(var(--bg-subtle))] p-5 dark:border-ink-800/70 sm:p-6">
+      <span className="mb-4 inline-flex items-center gap-2 text-sm font-semibold text-ink-900 dark:text-white">
+        <MessageSquare className="h-4 w-4 text-brand-500" />
+        The four message types
+      </span>
+
+      <div className="mb-4 flex flex-wrap gap-2">
+        {MESSAGE_ROLES.map((r) => (
+          <button
+            key={r.key}
+            type="button"
+            onClick={() => setSel(r.key)}
+            className={cn(
+              "inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm font-medium transition-all",
+              sel === r.key
+                ? "border-brand-400/70 bg-brand-500/10 text-brand-700 dark:text-brand-200"
+                : "border-ink-200/70 bg-white/60 text-ink-500 hover:border-brand-400/40 dark:border-ink-800/70 dark:bg-ink-900/40 dark:text-ink-400"
+            )}
+          >
+            {r.label}
+          </button>
+        ))}
+      </div>
+
+      <div key={sel} className="animate-fade-up">
+        {/* message bubble */}
+        <div className="flex items-start gap-3 rounded-xl border border-ink-200/70 bg-white/70 p-4 dark:border-ink-800/70 dark:bg-ink-900/50">
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-brand-500/12 text-brand-600 dark:text-brand-300">
+            <Icon className="h-4 w-4" />
+          </span>
+          <div className="min-w-0">
+            <span className="rounded-md bg-ink-100 px-1.5 py-0.5 font-mono text-[11px] text-ink-600 dark:bg-ink-800 dark:text-ink-300">
+              {role.cls}
+            </span>
+            <p className="mt-2 break-words font-mono text-sm text-ink-800 dark:text-ink-100">
+              {role.example}
+            </p>
+          </div>
+        </div>
+        <p className="mt-3 text-sm leading-relaxed text-ink-600 dark:text-ink-300">
+          {role.desc}
+        </p>
+      </div>
+    </figure>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* 22. ContextWindow — watch a conversation fill the context budget    */
+/* ------------------------------------------------------------------ */
+
+const TURN_COST = 12;
+const CTX_CAPACITY = 100;
+
+export function ContextWindow() {
+  const [turns, setTurns] = useState(0);
+  const [strategy, setStrategy] = useState<"all" | "trim" | "summarize">("all");
+
+  const used =
+    strategy === "all"
+      ? turns * TURN_COST
+      : strategy === "trim"
+        ? Math.min(turns, 4) * TURN_COST
+        : turns > 0
+          ? 8 + Math.min(turns, 2) * TURN_COST
+          : 0;
+
+  const pct = Math.min((used / CTX_CAPACITY) * 100, 100);
+  const over = used > CTX_CAPACITY;
+  const barColor = over
+    ? "bg-rose-500"
+    : pct >= 75
+      ? "bg-amber-500"
+      : "bg-brand-500";
+
+  const STRATS = [
+    { id: "all", label: "Keep everything" },
+    { id: "trim", label: "Trim to last 4" },
+    { id: "summarize", label: "Summarize older" },
+  ] as const;
+
+  return (
+    <figure className="not-prose my-8 rounded-2xl border border-ink-200/70 bg-[rgb(var(--bg-subtle))] p-5 dark:border-ink-800/70 sm:p-6">
+      <div className="mb-4 flex items-center justify-between gap-3">
+        <span className="inline-flex items-center gap-2 text-sm font-semibold text-ink-900 dark:text-white">
+          <Gauge className="h-4 w-4 text-brand-500" />
+          The context window fills up
+        </span>
+        <span className="font-mono text-xs text-ink-400">
+          {turns} turns · ~{used}/{CTX_CAPACITY}
+        </span>
+      </div>
+
+      {/* meter */}
+      <div className="h-4 w-full overflow-hidden rounded-full bg-ink-200 dark:bg-ink-800">
+        <div
+          className={cn("h-full rounded-full transition-all duration-300", barColor)}
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+      {over ? (
+        <p className="mt-2 text-xs font-medium text-rose-600 dark:text-rose-400">
+          Context budget exceeded — the model will error or silently truncate.
+        </p>
+      ) : (
+        <p className="mt-2 text-xs text-ink-400">
+          Every turn adds messages. Leave headroom for the model&apos;s reply.
+        </p>
+      )}
+
+      {/* strategy */}
+      <div className="mt-4 flex flex-wrap gap-2">
+        {STRATS.map((s) => (
+          <button
+            key={s.id}
+            type="button"
+            onClick={() => setStrategy(s.id)}
+            className={cn(
+              "rounded-lg border px-3 py-1.5 text-xs font-medium transition-all",
+              strategy === s.id
+                ? "border-brand-400/70 bg-brand-500/10 text-brand-700 dark:text-brand-200"
+                : "border-ink-200/70 bg-white/60 text-ink-500 hover:border-brand-400/40 dark:border-ink-800/70 dark:bg-ink-900/40 dark:text-ink-400"
+            )}
+          >
+            {s.label}
+          </button>
+        ))}
+      </div>
+
+      <div className="mt-4 flex items-center gap-2">
+        <button
+          type="button"
+          onClick={() => setTurns((v) => v + 1)}
+          className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-3.5 py-1.5 text-sm font-semibold text-white transition-colors hover:bg-brand-500"
+        >
+          <MessageSquare className="h-4 w-4" /> Add a turn
+        </button>
+        <button
+          type="button"
+          onClick={() => setTurns(0)}
+          className="ml-auto inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-medium text-ink-400 transition-colors hover:text-brand-600"
+        >
+          <RotateCcw className="h-3.5 w-3.5" /> Reset
+        </button>
+      </div>
+
+      <figcaption className="mt-3 text-xs text-ink-400">
+        {strategy === "all"
+          ? "Keeping the full history grows without bound — eventually it overflows."
+          : strategy === "trim"
+            ? "Trimming keeps only the most recent turns, so usage stays bounded."
+            : "Summarizing condenses older turns into a short recap, preserving context cheaply."}
       </figcaption>
     </figure>
   );
