@@ -2036,3 +2036,218 @@ export function NodeAnatomy() {
     </figure>
   );
 }
+
+/* ------------------------------------------------------------------ */
+/* 19. ConditionalRouter — pick an input, watch it route              */
+/* ------------------------------------------------------------------ */
+
+const ROUTER_EXAMPLES = [
+  { text: "How do I reset my password?", category: "question", branch: "answer" },
+  { text: "This product is broken and I'm furious!", category: "complaint", branch: "escalate" },
+  { text: "You WON $1000!!! Click here now →", category: "spam", branch: "discard" },
+];
+
+const ROUTER_BRANCHES = [
+  { key: "answer", desc: "Reply with a helpful answer." },
+  { key: "escalate", desc: "Hand off to a human agent." },
+  { key: "discard", desc: "Drop it and stop." },
+];
+
+export function ConditionalRouter() {
+  const [i, setI] = useState(0);
+  const chosen = ROUTER_EXAMPLES[i];
+
+  return (
+    <figure className="not-prose my-8 rounded-2xl border border-ink-200/70 bg-[rgb(var(--bg-subtle))] p-5 dark:border-ink-800/70 sm:p-6">
+      <span className="mb-4 inline-flex items-center gap-2 text-sm font-semibold text-ink-900 dark:text-white">
+        <GitBranch className="h-4 w-4 text-brand-500" />
+        A conditional edge in action
+      </span>
+
+      <p className="mb-3 text-sm text-ink-500 dark:text-ink-400">
+        Pick an incoming message. The classify node runs, then a routing
+        function decides which branch handles it.
+      </p>
+
+      <div className="mb-4 flex flex-col gap-2">
+        {ROUTER_EXAMPLES.map((ex, idx) => (
+          <button
+            key={idx}
+            type="button"
+            onClick={() => setI(idx)}
+            className={cn(
+              "rounded-lg border px-3 py-2 text-left text-sm transition-all",
+              i === idx
+                ? "border-brand-400/60 bg-brand-500/10 text-ink-900 dark:text-white"
+                : "border-ink-200/70 bg-white/60 text-ink-600 hover:border-brand-400/40 dark:border-ink-800/70 dark:bg-ink-900/40 dark:text-ink-300"
+            )}
+          >
+            &ldquo;{ex.text}&rdquo;
+          </button>
+        ))}
+      </div>
+
+      {/* routing readout */}
+      <div className="mb-4 flex flex-wrap items-center gap-2 font-mono text-xs">
+        <span className="rounded-lg border border-brand-400/60 bg-brand-500/10 px-2.5 py-1 font-semibold text-brand-700 dark:text-brand-200">
+          classify
+        </span>
+        <ArrowRight className="h-3.5 w-3.5 text-ink-400" />
+        <span className="text-ink-500">route(state) →</span>
+        <span className="rounded bg-ink-900 px-2 py-1 text-emerald-300">
+          &quot;{chosen.branch}&quot;
+        </span>
+        <span className="text-ink-400">(category: {chosen.category})</span>
+      </div>
+
+      {/* branches */}
+      <div className="grid gap-2 sm:grid-cols-3">
+        {ROUTER_BRANCHES.map((b) => {
+          const active = b.key === chosen.branch;
+          return (
+            <div
+              key={b.key}
+              className={cn(
+                "rounded-xl border p-3 transition-all",
+                active
+                  ? "border-brand-400/70 bg-brand-500/10 shadow-sm shadow-brand-500/10"
+                  : "border-ink-200/70 bg-white/40 opacity-50 dark:border-ink-800/70 dark:bg-ink-900/30"
+              )}
+            >
+              <p
+                className={cn(
+                  "font-mono text-sm font-semibold",
+                  active
+                    ? "text-brand-700 dark:text-brand-200"
+                    : "text-ink-600 dark:text-ink-300"
+                )}
+              >
+                {b.key}
+              </p>
+              <p className="mt-1 text-xs text-ink-500 dark:text-ink-400">
+                {b.desc}
+              </p>
+            </div>
+          );
+        })}
+      </div>
+      <figcaption className="mt-4 text-center text-xs text-ink-400">
+        Same graph, different path — the routing function chooses at run time.
+      </figcaption>
+    </figure>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* 20. LoopStepper — run a loop until its exit condition is met        */
+/* ------------------------------------------------------------------ */
+
+const LOOP_SCORES = [5, 7, 9];
+const LOOP_THRESHOLD = 8;
+const LOOP_MAX = 5;
+
+export function LoopStepper() {
+  const [it, setIt] = useState(0); // iterations completed
+
+  const iterations = LOOP_SCORES.slice(0, it).map((score, idx) => ({
+    attempt: idx + 1,
+    score,
+    done: score >= LOOP_THRESHOLD,
+  }));
+  const last = iterations[iterations.length - 1];
+  const finished = (last?.done ?? false) || it >= LOOP_SCORES.length;
+
+  return (
+    <figure className="not-prose my-8 rounded-2xl border border-ink-200/70 bg-[rgb(var(--bg-subtle))] p-5 dark:border-ink-800/70 sm:p-6">
+      <div className="mb-4 flex items-center justify-between gap-3">
+        <span className="inline-flex items-center gap-2 text-sm font-semibold text-ink-900 dark:text-white">
+          <RefreshCw className="h-4 w-4 text-brand-500" />
+          A loop with an exit condition
+        </span>
+        <span className="font-mono text-xs text-ink-400">
+          exit when score ≥ {LOOP_THRESHOLD} · max {LOOP_MAX} attempts
+        </span>
+      </div>
+
+      {/* node path */}
+      <div className="mb-4 flex flex-wrap items-center gap-1.5 font-mono text-xs">
+        <span className="rounded-lg border border-brand-400/60 bg-brand-500/10 px-2.5 py-1.5 text-brand-700 dark:text-brand-200">
+          generate
+        </span>
+        <ArrowRight className="h-3.5 w-3.5 text-ink-400" />
+        <span className="rounded-lg border border-brand-400/60 bg-brand-500/10 px-2.5 py-1.5 text-brand-700 dark:text-brand-200">
+          evaluate
+        </span>
+        <span className="inline-flex items-center gap-1 text-ink-400">
+          <RefreshCw className="h-3.5 w-3.5" /> or
+        </span>
+        <span className="rounded-full border border-brand-500/60 bg-white px-2.5 py-1 text-brand-600 dark:bg-ink-900 dark:text-brand-300">
+          END
+        </span>
+      </div>
+
+      {/* iteration log */}
+      <div className="space-y-2">
+        {iterations.length === 0 ? (
+          <p className="rounded-lg border border-dashed border-ink-300/60 p-4 text-center text-sm text-ink-400 dark:border-ink-700">
+            Press <span className="font-medium">Run iteration</span> to start the loop.
+          </p>
+        ) : (
+          iterations.map((r) => (
+            <div
+              key={r.attempt}
+              className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-ink-200/70 bg-white/60 p-3 text-sm dark:border-ink-800/70 dark:bg-ink-900/40"
+            >
+              <span className="font-mono text-xs text-ink-400">
+                attempt {r.attempt}
+              </span>
+              <span className="text-ink-700 dark:text-ink-200">
+                score = <span className="font-semibold">{r.score}</span>
+              </span>
+              <span
+                className={cn(
+                  "ml-auto rounded-full px-2 py-0.5 text-[11px] font-medium",
+                  r.done
+                    ? "bg-brand-500/15 text-brand-700 dark:text-brand-300"
+                    : "bg-amber-500/15 text-amber-700 dark:text-amber-300"
+                )}
+              >
+                {r.done
+                  ? `${r.score} ≥ ${LOOP_THRESHOLD} → done → END`
+                  : `${r.score} < ${LOOP_THRESHOLD} → loop back to generate`}
+              </span>
+            </div>
+          ))
+        )}
+      </div>
+
+      <div className="mt-4 flex items-center gap-2">
+        <button
+          type="button"
+          onClick={() => setIt((v) => Math.min(LOOP_SCORES.length, v + 1))}
+          disabled={finished}
+          className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-3.5 py-1.5 text-sm font-semibold text-white transition-colors hover:bg-brand-500 disabled:opacity-40"
+        >
+          <Play className="h-4 w-4" /> Run iteration
+        </button>
+        {finished && (
+          <span className="inline-flex items-center gap-1 text-sm font-medium text-brand-600 dark:text-brand-300">
+            <Check className="h-4 w-4" /> Loop exited
+          </span>
+        )}
+        <button
+          type="button"
+          onClick={() => setIt(0)}
+          className="ml-auto inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-medium text-ink-400 transition-colors hover:text-brand-600"
+        >
+          <RotateCcw className="h-3.5 w-3.5" /> Reset
+        </button>
+      </div>
+      <figcaption className="mt-3 text-xs text-ink-400">
+        The routing function returns <code className="font-mono">END</code> once
+        the score clears the threshold — otherwise it loops back. The max-attempts
+        guard (and LangGraph&apos;s recursion limit) prevent an infinite loop.
+      </figcaption>
+    </figure>
+  );
+}

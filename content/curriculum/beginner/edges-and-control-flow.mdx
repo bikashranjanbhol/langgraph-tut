@@ -1,0 +1,243 @@
+---
+updated: "2026-07-26"
+---
+
+Nodes do the work; **edges** decide what runs next. This chapter is where graphs stop being straight lines and start making decisions — branching on the state, looping until a goal is met, and falling back when something unexpected happens. Control flow is what turns a pipeline into an agent, so we'll take our time and finish by building a content-classification workflow.
+
+## 8.1 Sequential edges
+
+The simplest edge connects one node to the next, unconditionally. Chain them and you get a linear pipeline:
+
+```python
+builder.add_edge(START, "clean")
+builder.add_edge("clean", "count")
+builder.add_edge("count", END)
+```
+
+Read top to bottom: start → `clean` → `count` → end. Every run follows the exact same path. Sequential edges are perfect when the steps never change — but most real applications need to make choices.
+
+## 8.2 Branching workflows
+
+**Branching** means the graph can take different paths. There are two flavours, and it's worth keeping them straight:
+
+- **Parallel branching** — several edges leave a node and all their targets run *at the same time* (fan-out). We cover this in the intermediate part.
+- **Conditional branching** — the graph runs *one* of several paths, chosen at run time based on the state. This is the workhorse, and the rest of this chapter is about it.
+
+Conditional branching is how a graph adapts: classify a request and handle it accordingly, check a result and decide whether to continue, detect an error and reroute.
+
+## 8.3 Conditional edges
+
+A **conditional edge** picks the next node at run time by calling a function you provide. You add it with `add_conditional_edges`:
+
+```python
+builder.add_conditional_edges(
+    "classify",        # source node
+    route,             # routing function (below)
+    {                  # map its return value → destination node
+        "answer": "answer",
+        "escalate": "escalate",
+        "discard": "discard",
+    },
+)
+```
+
+After `classify` runs, LangGraph calls `route(state)`, looks up its return value in the mapping, and goes to that node. See it decide:
+
+<ConditionalRouter />
+
+Same graph, three different paths — the difference is entirely in the state the routing function reads.
+
+## 8.4 Routing functions
+
+A **routing function** is a small function that reads the state and returns which way to go. It should be simple and side-effect-free — its only job is to decide:
+
+```python
+def route(state: State) -> str:
+    category = state["category"]         # set by the classify node
+    if category == "question":
+        return "answer"
+    if category == "complaint":
+        return "escalate"
+    return "discard"
+```
+
+Two conventions make routers pleasant to work with:
+
+- Return a **key** and let the mapping translate it to a node name (as above). This decouples the decision from the graph wiring.
+- If your keys already *are* node names, you can skip the mapping dict entirely and return the node name directly.
+
+A router can also return `END` to finish the graph — which is exactly how loops terminate.
+
+## 8.5 Looping between nodes
+
+A **loop** is just a conditional edge that can point *backwards*. After a node runs, the router may send control to a node that already ran, so it runs again:
+
+```python
+builder.add_edge(START, "generate")
+builder.add_edge("generate", "evaluate")
+builder.add_conditional_edges(
+    "evaluate",
+    should_continue,
+    {"retry": "generate", "done": END},   # "retry" loops back
+)
+```
+
+The `evaluate → generate` back-edge is the loop. This is the shape of every agent: do something, check the result, and either finish or go again.
+
+## 8.6 Exit conditions
+
+A loop needs a way *out*. The routing function's job is to recognise when the goal is met and return `END`. Step through a refine-until-good-enough loop and watch its exit condition fire:
+
+<LoopStepper />
+
+```python
+def should_continue(state: State) -> str:
+    if state["score"] >= 8:
+        return "done"      # good enough → END
+    return "retry"         # keep going
+```
+
+The exit condition is the most important line in a loop. Without one, the graph never stops.
+
+## 8.7 Preventing infinite loops
+
+Even with an exit condition, things can go wrong — the score never improves, the model keeps asking for the same tool. Guard against runaway loops in two layers:
+
+**1. A guard in your own logic.** Track attempts in the state and give up after a limit:
+
+```python
+def should_continue(state: State) -> str:
+    if state["score"] >= 8 or state["attempts"] >= 5:
+        return "done"
+    return "retry"
+```
+
+**2. LangGraph's recursion limit.** As a backstop, LangGraph caps execution at a `recursion_limit` (default **25** super-steps) and raises `GraphRecursionError` if exceeded. Raise it deliberately when a task genuinely needs more steps:
+
+```python
+graph.invoke(input, {"recursion_limit": 50})
+```
+
+<Callout type="warning" title="The recursion limit is a safety net, not a plan">
+Always give loops a real exit condition. The recursion limit exists to stop a bug from running forever — relying on it as your termination strategy means every "finish" is actually a crash.
+</Callout>
+
+## 8.8 Fallback routes
+
+Routing functions face inputs you didn't anticipate — an unknown category, a missing value, an error from a previous node. Always handle the unexpected with a **fallback**.
+
+The simplest fallback is a default branch: anything that doesn't match a known case goes somewhere safe.
+
+```python
+def route(state: State) -> str:
+    category = state.get("category")
+    if category == "question":
+        return "answer"
+    if category == "complaint":
+        return "escalate"
+    return "fallback"        # unknown, missing, or error → handle gracefully
+```
+
+Fallbacks are also how you handle errors set by a node (remember the `error` channel from the last chapter): route to a recovery node when `error` is present, and to the normal path otherwise.
+
+<Callout type="tip" title="Make the default explicit">
+Don't let a router silently fall through to <code>None</code> or a `KeyError`. Always return a valid destination for every case — a named fallback node makes the "something went wrong" path visible in your graph.
+</Callout>
+
+## 8.9 Designing readable control flow
+
+Control flow is where graphs get hard to follow. A few habits keep yours legible:
+
+- **Keep routers small and pure.** A router reads state and returns a destination — nothing else. Do the work in nodes, not in routing functions.
+- **Use explicit mappings** and clear branch keys (`"retry"`, `"done"`, `"escalate"`) so the intent is obvious at the call site.
+- **Visualise it.** `print(graph.get_graph().draw_mermaid())` shows your branches and loops — the fastest way to catch a missing edge or an unreachable node.
+- **Prefer a shallow graph** over deeply nested conditionals inside one node. If a node is full of branching logic, that logic probably belongs in the graph as edges.
+
+<Callout type="note" title="Conditional edges vs. Command">
+There's another way to route: a node can return a <code>Command</code> that both updates state and picks the next node in one place. It's handy for tightly coupled decisions and multi-agent handoffs. We introduce it in the intermediate part; conditional edges are the clearest starting point.
+</Callout>
+
+## 8.10 Mini-project: Content classification workflow
+
+Let's put it together: an incoming message is **classified**, then **routed** to the right handler. This is the pattern behind support triage, moderation, and intent routing.
+
+**The plan.** A `classify` node uses the model's structured output to tag the message with a category. A routing function sends each category to its handler: questions get answered, complaints get escalated, spam gets discarded. Anything unexpected hits a fallback.
+
+```python
+from typing_extensions import TypedDict
+from typing import Literal
+from pydantic import BaseModel, Field
+from langchain.chat_models import init_chat_model
+from langgraph.graph import StateGraph, START, END
+
+llm = init_chat_model("anthropic:claude-sonnet-5")
+
+
+class State(TypedDict):
+    message: str
+    category: str
+    response: str
+
+
+class Classification(BaseModel):
+    category: Literal["question", "complaint", "spam"] = Field(
+        description="The kind of message"
+    )
+
+
+classifier = llm.with_structured_output(Classification)
+
+
+def classify(state: State) -> dict:
+    result = classifier.invoke(state["message"])
+    return {"category": result.category}
+
+
+def answer(state: State) -> dict:
+    reply = llm.invoke(f"Answer this question:\n\n{state['message']}")
+    return {"response": reply.content}
+
+
+def escalate(state: State) -> dict:
+    return {"response": "Escalated to a human agent."}
+
+
+def discard(state: State) -> dict:
+    return {"response": "Discarded as spam."}
+
+
+def route(state: State) -> str:
+    return {
+        "question": "answer",
+        "complaint": "escalate",
+        "spam": "discard",
+    }.get(state["category"], "discard")   # fallback: discard
+
+
+builder = StateGraph(State)
+builder.add_node("classify", classify)
+builder.add_node("answer", answer)
+builder.add_node("escalate", escalate)
+builder.add_node("discard", discard)
+
+builder.add_edge(START, "classify")
+builder.add_conditional_edges(
+    "classify",
+    route,
+    {"answer": "answer", "escalate": "escalate", "discard": "discard"},
+)
+builder.add_edge("answer", END)
+builder.add_edge("escalate", END)
+builder.add_edge("discard", END)
+
+graph = builder.compile()
+
+result = graph.invoke({"message": "How do I reset my password?"})
+print(result["category"], "→", result["response"])
+```
+
+**Try extending it.** Add a `praise` category with an `acknowledge` handler, or add a confidence score to the classification and route low-confidence messages to a human. Each change is the same three moves: adjust the schema, add a node, wire an edge.
+
+<Callout type="success" title="You control the flow now">
+Sequential, branching, conditional, looping, exiting, and falling back — you can express any control flow a graph needs. Next we bring the model into the picture properly with <strong>messages and conversation state</strong>, and build a real chatbot.
+</Callout>
