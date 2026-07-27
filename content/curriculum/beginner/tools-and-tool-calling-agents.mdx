@@ -1,0 +1,244 @@
+---
+updated: "2026-07-26"
+---
+
+A model on its own can only talk. **Tools** give it hands — the ability to fetch information, run calculations, and act on the world. In this chapter you'll define tools, bind them to a model, understand how the model requests them, and wire up the **model–tool loop** that turns a chatbot into an agent. It all comes together in a calculator-and-information agent at the end.
+
+## 10.1 What is a tool?
+
+A **tool** is a function the model can choose to call. When the model decides a task needs something it can't do from memory — a live lookup, a precise calculation, an API call — it emits a *tool call*: the tool's name and the arguments to run it with. Your code runs the tool and hands the result back, and the model continues with that new information.
+
+Tools are what let an agent go beyond its training data and take real actions. A model with a `search` tool can answer questions about today's news; one with a `send_email` tool can actually send mail.
+
+<Callout type="note" title="The model doesn't run the tool">
+The model only *requests* a tool call — it never executes anything itself. Your application runs the tool and returns the result. That separation is what keeps you in control of what the agent can actually do.
+</Callout>
+
+## 10.2 Defining Python tools
+
+The simplest way to make a tool is the `@tool` decorator. Write an ordinary function with type hints and a docstring:
+
+```python
+from langchain_core.tools import tool
+
+
+@tool
+def calculator(expression: str) -> str:
+    """Evaluate a basic arithmetic expression, e.g. '2 + 2 * 3'."""
+    return str(eval(expression))   # demo only — never eval untrusted input in production
+
+
+@tool
+def get_capital(country: str) -> str:
+    """Return the capital city of a given country."""
+    capitals = {"France": "Paris", "Japan": "Tokyo", "Kenya": "Nairobi"}
+    return capitals.get(country, "Unknown")
+```
+
+That's it — each is now a tool the model can call.
+
+## 10.3 Tool schemas and descriptions
+
+When you decorate a function, LangChain builds a **schema** from it: the tool's **name** (the function name), its **description** (the docstring), and its **arguments** (from the type hints). The model sees this schema and uses it to decide *when* and *how* to call the tool.
+
+The description is the most important part — it's prompt engineering. Say clearly what the tool does and when to use it.
+
+For richer arguments, define a Pydantic schema with per-field descriptions:
+
+```python
+from pydantic import BaseModel, Field
+from langchain_core.tools import tool
+
+
+class WeatherInput(BaseModel):
+    city: str = Field(description="City name, e.g. 'Paris'")
+    units: str = Field(default="celsius", description="'celsius' or 'fahrenheit'")
+
+
+@tool(args_schema=WeatherInput)
+def get_weather(city: str, units: str = "celsius") -> str:
+    """Get the current weather for a city."""
+    ...
+```
+
+<Callout type="tip" title="Write descriptions for the model">
+A vague docstring leads to a tool being called at the wrong time — or not at all. Treat every tool name and description as part of your prompt: specific, action-oriented, and clear about when it applies.
+</Callout>
+
+## 10.4 Binding tools to a model
+
+Defining tools isn't enough — the model needs to know they exist. **Bind** them, which adds their schemas to every request so the model can emit tool calls:
+
+```python
+from langchain.chat_models import init_chat_model
+
+llm = init_chat_model("anthropic:claude-sonnet-5")
+tools = [calculator, get_capital]
+llm_with_tools = llm.bind_tools(tools)
+```
+
+`llm_with_tools` behaves like the model, but now it *may* respond with tool calls instead of a final answer.
+
+## 10.5 Understanding tool calls
+
+When the model wants a tool, its `AIMessage` contains **`tool_calls`** instead of (or alongside) text. Each entry has the tool's `name`, the `args` to run it with, and a unique `id`:
+
+```python
+response = llm_with_tools.invoke("What is 15 * 24?")
+print(response.tool_calls)
+# [{'name': 'calculator', 'args': {'expression': '15 * 24'}, 'id': 'call_abc'}]
+```
+
+An empty `tool_calls` list means the model answered directly. A non-empty one means "please run these and tell me the results." That distinction is exactly what drives the loop.
+
+## 10.6 Executing tool requests
+
+Once the model requests a tool, your code runs it with the provided arguments. You *could* do this by hand — look up the tool by name and call it — but LangGraph gives you a prebuilt node that does it for you: **`ToolNode`**.
+
+```python
+from langgraph.prebuilt import ToolNode
+
+tool_node = ToolNode(tools)
+```
+
+`ToolNode` reads the latest message's `tool_calls`, runs each matching tool (in parallel if there are several), and returns the results. You almost never need to dispatch tools manually.
+
+## 10.7 Returning tool results
+
+A tool's output goes back to the model as a **`ToolMessage`**, tagged with the `tool_call_id` it answers. `ToolNode` builds these for you and appends them to `messages`:
+
+```python
+# ToolNode produces something like:
+# ToolMessage(content="360", tool_call_id="call_abc")
+```
+
+The model then sees the result on its next turn and can use it to produce a final answer — or call another tool. Because everything lives in the `messages` list, the conversation carries the full trace: the question, the tool call, the result, and the answer.
+
+## 10.8 Building a model–tool loop
+
+Now the centerpiece. An agent is a **loop** between two nodes: the **agent** (the tool-bound model) and the **tools** node. After the agent runs, a conditional edge checks: did it request a tool? If so, run the tools and loop back; if not, finish.
+
+Step through one full cycle and watch the messages accumulate:
+
+<ToolLoop />
+
+Here's the loop in code. `tools_condition` is a prebuilt router that returns `"tools"` when the last message has tool calls and `END` otherwise:
+
+```python
+from langgraph.graph import StateGraph, MessagesState, START, END
+from langgraph.prebuilt import ToolNode, tools_condition
+
+
+def agent(state: MessagesState) -> dict:
+    return {"messages": [llm_with_tools.invoke(state["messages"])]}
+
+
+builder = StateGraph(MessagesState)
+builder.add_node("agent", agent)
+builder.add_node("tools", ToolNode(tools))
+
+builder.add_edge(START, "agent")
+builder.add_conditional_edges("agent", tools_condition)  # → "tools" or END
+builder.add_edge("tools", "agent")                        # loop back
+
+graph = builder.compile()
+```
+
+The `tools → agent` back-edge is the whole trick: tool results flow back to the model, which reasons again. This runs as many times as the task needs.
+
+## 10.9 Handling unknown tools
+
+Occasionally a model asks for a tool that isn't in your set, or gets an argument name wrong. You don't want that to crash the graph. `ToolNode` handles it gracefully: an unknown tool comes back as an error `ToolMessage`, which the model reads and can recover from — usually by trying a valid tool instead.
+
+Because the model is *shown* its mistake, it can self-correct within the same loop. Your job is just to make sure the failure is returned as a message, not raised as an unhandled exception — which is exactly what `ToolNode` does by default.
+
+## 10.10 Handling tool failures
+
+Real tools fail: a network call times out, an API returns an error, an input is invalid. `ToolNode` catches exceptions and returns them to the model as error `ToolMessage`s, so the agent can react rather than die:
+
+```python
+# handle_tool_errors=True is the default
+tool_node = ToolNode(tools, handle_tool_errors=True)
+```
+
+You can customise the message the model sees, or raise a `ToolException` inside a tool for a controlled, model-visible failure.
+
+<Callout type="warning" title="Tool arguments are untrusted">
+Tool arguments come from the model, which can be steered by user input. Never pass them straight into <code>eval</code>, shell commands, SQL, or file paths. Validate and sanitise them exactly as you would any external input — a Pydantic <code>args_schema</code> helps, but it is not a security boundary.
+</Callout>
+
+## 10.11 Mini-project: Calculator and information agent
+
+Let's build a small but real agent with two tools — a calculator and a capital-city lookup — using the loop from this chapter. Ask it a question that needs both, and watch it call each tool before answering.
+
+```python
+from langchain.chat_models import init_chat_model
+from langchain_core.tools import tool
+from langgraph.graph import StateGraph, MessagesState, START, END
+from langgraph.prebuilt import ToolNode, tools_condition
+
+llm = init_chat_model("anthropic:claude-sonnet-5")
+
+
+@tool
+def calculator(expression: str) -> str:
+    """Evaluate a basic arithmetic expression, e.g. '2 + 2 * 3'."""
+    import ast, operator
+    # a tiny safe evaluator (no eval) for +, -, *, /
+    ops = {ast.Add: operator.add, ast.Sub: operator.sub,
+           ast.Mult: operator.mul, ast.Div: operator.truediv}
+
+    def ev(node):
+        if isinstance(node, ast.Constant):
+            return node.value
+        if isinstance(node, ast.BinOp):
+            return ops[type(node.op)](ev(node.left), ev(node.right))
+        raise ValueError("unsupported expression")
+
+    return str(ev(ast.parse(expression, mode="eval").body))
+
+
+@tool
+def get_capital(country: str) -> str:
+    """Return the capital city of a given country."""
+    capitals = {"France": "Paris", "Japan": "Tokyo", "Kenya": "Nairobi"}
+    return capitals.get(country, "Unknown")
+
+
+tools = [calculator, get_capital]
+llm_with_tools = llm.bind_tools(tools)
+
+
+def agent(state: MessagesState) -> dict:
+    return {"messages": [llm_with_tools.invoke(state["messages"])]}
+
+
+builder = StateGraph(MessagesState)
+builder.add_node("agent", agent)
+builder.add_node("tools", ToolNode(tools))
+builder.add_edge(START, "agent")
+builder.add_conditional_edges("agent", tools_condition)
+builder.add_edge("tools", "agent")
+graph = builder.compile()
+
+result = graph.invoke({
+    "messages": [("user", "What is 15 * 24, and what's the capital of Japan?")]
+})
+for m in result["messages"]:
+    m.pretty_print()
+```
+
+You'll see the agent call `calculator`, call `get_capital`, then combine both results into a single answer — the reason-act-observe loop in action.
+
+<Callout type="tip" title="The one-line version">
+Building the loop by hand is the best way to understand it, but in practice you'll often reach for the prebuilt <code>create_react_agent</code>, which assembles this exact graph for you:
+
+```python
+from langgraph.prebuilt import create_react_agent
+agent = create_react_agent(model="anthropic:claude-sonnet-5", tools=tools)
+```
+</Callout>
+
+<Callout type="success" title="You built an agent">
+Tools, schemas, binding, tool calls, the ToolNode, and the model–tool loop — you now have a working agent that reasons, acts, and observes. Next we make it remember across sessions with <strong>persistence and memory</strong>.
+</Callout>

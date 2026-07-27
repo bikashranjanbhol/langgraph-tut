@@ -2457,3 +2457,162 @@ export function ContextWindow() {
     </figure>
   );
 }
+
+/* ------------------------------------------------------------------ */
+/* 23. ToolLoop — step through the model–tool loop                     */
+/* ------------------------------------------------------------------ */
+
+const TOOL_STEPS: {
+  active: "user" | "agent" | "tools";
+  note: string;
+  msg: { role: "Human" | "AI" | "Tool"; text: string; tool?: boolean };
+  end?: boolean;
+}[] = [
+  {
+    active: "user",
+    note: "The user asks a question that needs a calculation.",
+    msg: { role: "Human", text: "What is 15 × 24?" },
+  },
+  {
+    active: "agent",
+    note: "The model decides it needs the calculator and emits a tool call — it doesn't answer yet.",
+    msg: { role: "AI", text: 'calculator(expression="15 * 24")', tool: true },
+  },
+  {
+    active: "tools",
+    note: "The tools node runs the calculator and feeds the result back as a ToolMessage.",
+    msg: { role: "Tool", text: "360" },
+  },
+  {
+    active: "agent",
+    note: "The model reads the result and writes the final answer. No more tool calls, so the graph ends.",
+    msg: { role: "AI", text: "15 × 24 = 360." },
+    end: true,
+  },
+];
+
+const MSG_STYLE: Record<string, { icon: typeof User; tone: string }> = {
+  Human: { icon: User, tone: "border-sky-500/40 bg-sky-500/5" },
+  AI: { icon: Bot, tone: "border-brand-500/40 bg-brand-500/5" },
+  Tool: { icon: Wrench, tone: "border-amber-500/40 bg-amber-500/5" },
+};
+
+export function ToolLoop() {
+  const [i, setI] = useState(0);
+  const step = TOOL_STEPS[i];
+  const shown = TOOL_STEPS.slice(0, i + 1);
+
+  return (
+    <figure className="not-prose my-8 rounded-2xl border border-ink-200/70 bg-[rgb(var(--bg-subtle))] p-5 dark:border-ink-800/70 sm:p-6">
+      <div className="mb-4 flex items-center justify-between gap-3">
+        <span className="inline-flex items-center gap-2 text-sm font-semibold text-ink-900 dark:text-white">
+          <Wrench className="h-4 w-4 text-brand-500" />
+          The model–tool loop
+        </span>
+        <span className="font-mono text-xs text-ink-400">
+          step {i + 1} / {TOOL_STEPS.length}
+        </span>
+      </div>
+
+      {/* node indicator */}
+      <div className="mb-4 flex flex-wrap items-center gap-1.5 font-mono text-xs">
+        <span
+          className={cn(
+            "rounded-lg border px-2.5 py-1.5 transition-all",
+            step.active === "agent"
+              ? "border-brand-400/70 bg-brand-500/15 text-brand-700 dark:text-brand-200"
+              : "border-ink-200/70 bg-white/50 text-ink-400 dark:border-ink-800/70 dark:bg-ink-900/40"
+          )}
+        >
+          agent
+        </span>
+        <span className="inline-flex items-center gap-1 text-ink-400">
+          <RefreshCw className="h-3.5 w-3.5" />
+        </span>
+        <span
+          className={cn(
+            "rounded-lg border px-2.5 py-1.5 transition-all",
+            step.active === "tools"
+              ? "border-brand-400/70 bg-brand-500/15 text-brand-700 dark:text-brand-200"
+              : "border-ink-200/70 bg-white/50 text-ink-400 dark:border-ink-800/70 dark:bg-ink-900/40"
+          )}
+        >
+          tools
+        </span>
+        {step.end && (
+          <>
+            <ArrowRight className="h-3.5 w-3.5 text-ink-400" />
+            <span className="rounded-full border border-brand-500/60 bg-white px-2.5 py-1 text-brand-600 dark:bg-ink-900 dark:text-brand-300">
+              END
+            </span>
+          </>
+        )}
+      </div>
+
+      {/* messages */}
+      <div className="space-y-2">
+        {shown.map((s, idx) => {
+          const style = MSG_STYLE[s.msg.role];
+          const Icon = style.icon;
+          return (
+            <div
+              key={idx}
+              className={cn(
+                "flex items-start gap-2.5 rounded-xl border p-3",
+                style.tone,
+                idx === i ? "animate-fade-up" : ""
+              )}
+            >
+              <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-white/70 text-ink-500 dark:bg-ink-900/70">
+                <Icon className="h-3.5 w-3.5" />
+              </span>
+              <div className="min-w-0">
+                <span className="font-mono text-[11px] uppercase tracking-wide text-ink-400">
+                  {s.msg.role}
+                  {s.msg.tool ? " · tool call" : ""}
+                </span>
+                <p className="break-words font-mono text-[13px] text-ink-800 dark:text-ink-100">
+                  {s.msg.tool ? "→ " : ""}
+                  {s.msg.text}
+                </p>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <p
+        key={i}
+        className="mt-4 rounded-xl border border-brand-400/20 bg-brand-500/5 p-4 text-sm leading-relaxed text-ink-700 dark:bg-brand-500/10 dark:text-ink-200"
+      >
+        {step.note}
+      </p>
+
+      <div className="mt-4 flex items-center gap-2">
+        <button
+          type="button"
+          onClick={() => setI((v) => Math.max(0, v - 1))}
+          disabled={i === 0}
+          className="inline-flex items-center gap-1 rounded-lg border border-ink-200 px-3 py-1.5 text-sm font-medium text-ink-600 transition-colors hover:border-brand-400/50 disabled:opacity-40 dark:border-ink-700 dark:text-ink-300"
+        >
+          <ChevronLeft className="h-4 w-4" /> Back
+        </button>
+        <button
+          type="button"
+          onClick={() => setI((v) => Math.min(TOOL_STEPS.length - 1, v + 1))}
+          disabled={i === TOOL_STEPS.length - 1}
+          className="inline-flex items-center gap-1 rounded-lg bg-brand-600 px-3.5 py-1.5 text-sm font-semibold text-white transition-colors hover:bg-brand-500 disabled:opacity-40"
+        >
+          Next step <ChevronRight className="h-4 w-4" />
+        </button>
+        <button
+          type="button"
+          onClick={() => setI(0)}
+          className="ml-auto inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-medium text-ink-400 transition-colors hover:text-brand-600"
+        >
+          <RotateCcw className="h-3.5 w-3.5" /> Reset
+        </button>
+      </div>
+    </figure>
+  );
+}
