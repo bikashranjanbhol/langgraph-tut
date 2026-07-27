@@ -1,0 +1,203 @@
+---
+updated: "2026-07-26"
+---
+
+So far every `invoke` has started from a blank slate. Real assistants need to *remember* — the last thing you said, the conversation from yesterday, your preferences. LangGraph provides this through **persistence**: checkpointers that save state, threads that keep conversations separate, and stores for knowledge that outlives any single chat. This chapter is your introduction; the intermediate part goes deeper.
+
+## 11.1 Why agent state must persist
+
+By default, `graph.invoke` is **stateless** — it runs, returns, and forgets. That's fine for one-shot tasks, but it breaks anything conversational or long-running:
+
+- A chatbot can't remember what you said two messages ago.
+- An agent can't resume after a crash or a server restart.
+- A workflow can't pause for human approval and continue later.
+- You can't inspect, debug, or replay what happened.
+
+**Persistence** fixes all of these by saving the graph's state as it runs. Turn it on and your graph gains memory, resumability, and time-travel — with almost no code.
+
+## 11.2 Threads and conversation identity
+
+Persistence is organised by **thread**. A thread is one continuous conversation, identified by a `thread_id` you pass in the config. Same `thread_id` → continue that conversation; new `thread_id` → start fresh. Threads are completely isolated from each other:
+
+<ThreadSwitcher />
+
+```python
+config = {"configurable": {"thread_id": "customer-123"}}
+graph.invoke({"messages": [("user", "Hi!")]}, config)
+```
+
+The `thread_id` is how the graph knows *which* memory to load. It's typically a user id, a session id, or a conversation id from your application.
+
+## 11.3 Checkpoints
+
+A **checkpoint** is a snapshot of the graph's state, saved automatically after each super-step. Each checkpoint records the state values, which node(s) run next, and some metadata. Because every step is saved, a thread has a full timeline of its own history.
+
+Checkpoints are what make everything else possible: to *resume*, LangGraph loads the latest checkpoint; to *time-travel*, it loads an earlier one; to *recover from a crash*, it picks up from the last saved checkpoint.
+
+## 11.4 Checkpointers
+
+A **checkpointer** is the component that saves and loads checkpoints. You turn persistence on by passing one when you compile:
+
+```python
+graph = builder.compile(checkpointer=checkpointer)
+```
+
+That single argument is the difference between a stateless graph and a stateful one. LangGraph offers several checkpointer backends:
+
+- **`MemorySaver`** — in-memory, for development and tests.
+- **`SqliteSaver`** — a local SQLite file, great for a single app.
+- **`PostgresSaver`** — Postgres, for production and concurrency.
+
+They share the same interface, so you develop with one and deploy with another by changing a single line.
+
+## 11.5 In-memory checkpointing
+
+The simplest checkpointer keeps everything in RAM. Perfect for learning and tests:
+
+```python
+from langgraph.checkpoint.memory import MemorySaver
+
+graph = builder.compile(checkpointer=MemorySaver())
+```
+
+<Callout type="warning" title="MemorySaver is not for production">
+An in-memory checkpointer loses everything when the process stops. It's ideal for development, but for anything real, use <code>SqliteSaver</code> or <code>PostgresSaver</code> so conversations survive restarts. We'll set those up in the persistence-in-depth chapter.
+</Callout>
+
+## 11.6 Saving conversation state
+
+Once a checkpointer is attached, saving is **automatic** — you don't call a "save" function. Every step, LangGraph writes a checkpoint for the current thread. In practice this means you only send the *new* message each turn, and the graph loads the rest:
+
+```python
+config = {"configurable": {"thread_id": "customer-123"}}
+
+graph.invoke({"messages": [("user", "My name is Ada.")]}, config)
+# ...later, same thread — only the new message is sent...
+graph.invoke({"messages": [("user", "What's my name?")]}, config)
+```
+
+Because the `add_messages` reducer appends to the restored history, the second call has the full conversation — and the model knows the name is Ada.
+
+## 11.7 Resuming a previous conversation
+
+To resume, just invoke again with the **same `thread_id`**. LangGraph restores the latest checkpoint and continues. With a durable checkpointer, this works even after your program restarts — the conversation is right where you left it.
+
+You can also inspect a thread's saved state directly:
+
+```python
+snapshot = graph.get_state(config)
+print(snapshot.values["messages"])   # the current state of this thread
+```
+
+And walk its full history of checkpoints — the basis for time-travel, which we cover later:
+
+```python
+for snap in graph.get_state_history(config):
+    print(snap.config["configurable"]["checkpoint_id"])
+```
+
+## 11.8 Short-term versus long-term memory
+
+The checkpointer gives you **short-term memory**: everything within a single thread. But sometimes you want facts to persist *across* threads — a user's name, their preferences, things learned in past conversations. That's **long-term memory**, and it uses a separate component: a **store**.
+
+<MemoryTiers />
+
+A store holds namespaced key-value memories that any thread can read:
+
+```python
+from langgraph.store.memory import InMemoryStore
+
+store = InMemoryStore()
+graph = builder.compile(checkpointer=MemorySaver(), store=store)
+```
+
+Inside a node, LangGraph injects the store so you can read and write cross-thread memories:
+
+```python
+from langgraph.store.base import BaseStore
+
+
+def remember(state: State, *, store: BaseStore) -> dict:
+    namespace = ("user-123", "facts")
+    store.put(namespace, "name", {"value": "Ada"})
+    facts = store.search(namespace)          # available in any thread
+    return {}
+```
+
+Most real assistants use **both**: the checkpointer for the current conversation, the store for lasting knowledge.
+
+## 11.9 Common memory mistakes
+
+Persistence is easy to get *slightly* wrong. The usual traps:
+
+- **Forgetting the `thread_id`.** Without it, there's no conversation to save or resume — each call is isolated. Always pass a config with a `thread_id`.
+- **Using `MemorySaver` in production.** It vanishes on restart. Use a durable backend for anything real.
+- **Letting history grow forever.** A persisted conversation still has to fit the context window — apply the trimming and summarizing from Chapter 9.
+- **Mixing up users.** Reusing one `thread_id` across different users leaks their conversations into each other. Scope threads (and long-term namespaces) per user.
+- **Storing secrets in state or memory.** Checkpoints and stores are persisted verbatim — never put passwords, tokens, or sensitive data in them.
+
+<Callout type="tip" title="Pick good thread ids">
+A stable, unique <code>thread_id</code> per conversation is the whole game. Derive it from something meaningful in your app — a user id plus a session id, say — so resuming is always unambiguous.
+</Callout>
+
+## 11.10 Mini-project: Personal assistant with memory
+
+Let's build an assistant that has both kinds of memory: it remembers the current conversation (short-term, via the checkpointer) *and* recalls facts about you across conversations (long-term, via the store).
+
+```python
+from langchain.chat_models import init_chat_model
+from langgraph.graph import StateGraph, MessagesState, START, END
+from langgraph.checkpoint.memory import MemorySaver
+from langgraph.store.memory import InMemoryStore
+from langgraph.store.base import BaseStore
+
+llm = init_chat_model("anthropic:claude-sonnet-5")
+
+
+def assistant(state: MessagesState, *, store: BaseStore) -> dict:
+    user_id = "user-123"
+    namespace = (user_id, "facts")
+
+    # 1. recall long-term memories about this user
+    memories = store.search(namespace)
+    facts = "\n".join(m.value["text"] for m in memories) or "(none yet)"
+
+    system = (
+        "You are a helpful personal assistant.\n"
+        f"What you remember about the user:\n{facts}"
+    )
+    response = llm.invoke([("system", system), *state["messages"]])
+
+    # 2. naive fact capture: remember statements like "my name is ..."
+    last = state["messages"][-1].content.lower()
+    if "my name is" in last:
+        name = last.split("my name is", 1)[1].strip().rstrip(".")
+        store.put(namespace, "name", {"text": f"The user's name is {name}."})
+
+    return {"messages": [response]}
+
+
+builder = StateGraph(MessagesState)
+builder.add_node("assistant", assistant)
+builder.add_edge(START, "assistant")
+builder.add_edge("assistant", END)
+
+graph = builder.compile(checkpointer=MemorySaver(), store=InMemoryStore())
+
+# Conversation 1 — teach it a fact
+cfg1 = {"configurable": {"thread_id": "chat-1"}}
+graph.invoke({"messages": [("user", "Hi, my name is Ada.")]}, cfg1)
+
+# Conversation 2 — a brand-new thread still remembers, via the store
+cfg2 = {"configurable": {"thread_id": "chat-2"}}
+out = graph.invoke({"messages": [("user", "Do you remember my name?")]}, cfg2)
+print(out["messages"][-1].content)   # recalls "Ada" — from long-term memory
+```
+
+The key insight: `chat-2` is a *different* thread with no shared message history, yet the assistant still knows the user's name — because that fact lives in the long-term **store**, not the thread checkpoint.
+
+**Try extending it.** Store preferences (tone, language) and inject them into the system prompt, or use a durable `SqliteSaver` so conversations survive a restart.
+
+<Callout type="success" title="Your agents can remember now">
+Threads, checkpoints, checkpointers, short-term and long-term memory — your graphs can persist, resume, and recall. Next we make agents feel responsive with <strong>streaming</strong>, surfacing progress as they work.
+</Callout>

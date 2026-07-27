@@ -2616,3 +2616,208 @@ export function ToolLoop() {
     </figure>
   );
 }
+
+/* ------------------------------------------------------------------ */
+/* 24. ThreadSwitcher — each thread_id is an isolated conversation     */
+/* ------------------------------------------------------------------ */
+
+const THREADS = [
+  {
+    id: "customer-123",
+    label: "Ada",
+    msgs: [
+      { role: "Human", text: "Hi, my order 42 is late." },
+      { role: "AI", text: "Sorry! Order 42 shipped yesterday and arrives tomorrow." },
+      { role: "Human", text: "What order number was that again?" },
+      { role: "AI", text: "Order 42." },
+    ],
+  },
+  {
+    id: "customer-456",
+    label: "Ben",
+    msgs: [
+      { role: "Human", text: "Do you sell replacement cables?" },
+      { role: "AI", text: "Yes — the USB-C cable is $9." },
+    ],
+  },
+  { id: "customer-789", label: "New", msgs: [] as { role: string; text: string }[] },
+];
+
+export function ThreadSwitcher() {
+  const [id, setId] = useState(THREADS[0].id);
+  const thread = THREADS.find((t) => t.id === id) ?? THREADS[0];
+
+  return (
+    <figure className="not-prose my-8 rounded-2xl border border-ink-200/70 bg-[rgb(var(--bg-subtle))] p-5 dark:border-ink-800/70 sm:p-6">
+      <span className="mb-4 inline-flex items-center gap-2 text-sm font-semibold text-ink-900 dark:text-white">
+        <MessageSquare className="h-4 w-4 text-brand-500" />
+        One graph, many threads
+      </span>
+
+      <div className="mb-3 flex flex-wrap gap-2">
+        {THREADS.map((t) => (
+          <button
+            key={t.id}
+            type="button"
+            onClick={() => setId(t.id)}
+            className={cn(
+              "rounded-lg border px-3 py-1.5 font-mono text-xs font-medium transition-all",
+              id === t.id
+                ? "border-brand-400/70 bg-brand-500/10 text-brand-700 dark:text-brand-200"
+                : "border-ink-200/70 bg-white/60 text-ink-500 hover:border-brand-400/40 dark:border-ink-800/70 dark:bg-ink-900/40 dark:text-ink-400"
+            )}
+          >
+            {t.id}
+          </button>
+        ))}
+      </div>
+
+      <p className="mb-3 font-mono text-xs text-ink-400">
+        config = {`{"configurable": {"thread_id": `}
+        <span className="text-emerald-500 dark:text-emerald-300">
+          &quot;{thread.id}&quot;
+        </span>
+        {`}}`}
+      </p>
+
+      <div
+        key={id}
+        className="animate-fade-up space-y-2 rounded-xl border border-ink-200/70 bg-white/50 p-3 dark:border-ink-800/70 dark:bg-ink-900/40"
+      >
+        {thread.msgs.length === 0 ? (
+          <p className="py-6 text-center text-sm text-ink-400">
+            No history yet — a fresh conversation starts here.
+          </p>
+        ) : (
+          thread.msgs.map((m, idx) => (
+            <div
+              key={idx}
+              className={cn(
+                "flex gap-2 text-sm",
+                m.role === "Human" ? "" : "flex-row-reverse text-right"
+              )}
+            >
+              <span
+                className={cn(
+                  "max-w-[80%] rounded-xl px-3 py-1.5",
+                  m.role === "Human"
+                    ? "bg-ink-100 text-ink-700 dark:bg-ink-800 dark:text-ink-200"
+                    : "bg-brand-500/15 text-ink-800 dark:text-ink-100"
+                )}
+              >
+                {m.text}
+              </span>
+            </div>
+          ))
+        )}
+      </div>
+      <figcaption className="mt-4 text-center text-xs text-ink-400">
+        Switch threads — the checkpointer restores each conversation&apos;s own
+        history. They never mix.
+      </figcaption>
+    </figure>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* 25. MemoryTiers — short-term vs long-term memory                    */
+/* ------------------------------------------------------------------ */
+
+const TIERS = {
+  short: {
+    scope: "One conversation (a single thread)",
+    backed: "Checkpointer",
+    lifetime: "Lives with the thread",
+    example: "“Earlier you said your order was #42.”",
+  },
+  long: {
+    scope: "Across all conversations (a user)",
+    backed: "Store",
+    lifetime: "Persists indefinitely",
+    example: "“Welcome back, Ada — still prefer email updates?”",
+  },
+} as const;
+
+export function MemoryTiers() {
+  const [tier, setTier] = useState<"short" | "long">("short");
+  const t = TIERS[tier];
+
+  return (
+    <figure className="not-prose my-8 rounded-2xl border border-ink-200/70 bg-[rgb(var(--bg-subtle))] p-5 dark:border-ink-800/70 sm:p-6">
+      <span className="mb-4 inline-flex items-center gap-2 text-sm font-semibold text-ink-900 dark:text-white">
+        <Database className="h-4 w-4 text-brand-500" />
+        Short-term vs long-term memory
+      </span>
+
+      <div className="mb-4 inline-flex rounded-xl border border-ink-200 bg-white/70 p-1 dark:border-ink-700 dark:bg-ink-900/60">
+        {(["short", "long"] as const).map((k) => (
+          <button
+            key={k}
+            type="button"
+            onClick={() => setTier(k)}
+            className={cn(
+              "rounded-lg px-3.5 py-1.5 text-sm font-medium transition-colors",
+              tier === k
+                ? "bg-brand-600 text-white shadow-sm"
+                : "text-ink-500 hover:text-ink-800 dark:text-ink-400 dark:hover:text-ink-100"
+            )}
+          >
+            {k === "short" ? "Short-term" : "Long-term"}
+          </button>
+        ))}
+      </div>
+
+      {/* scope visual */}
+      <div className="mb-4 rounded-xl border border-ink-200/70 bg-white/50 p-4 dark:border-ink-800/70 dark:bg-ink-900/40">
+        {tier === "short" ? (
+          <div className="flex items-center justify-center gap-2">
+            <span className="rounded-lg border border-brand-400/60 bg-brand-500/10 px-4 py-2 font-mono text-xs text-brand-700 dark:text-brand-200">
+              thread
+            </span>
+            <span className="text-xs text-ink-400">→ its own saved history</span>
+          </div>
+        ) : (
+          <div className="flex flex-col items-center gap-2">
+            <div className="flex flex-wrap justify-center gap-2">
+              {["thread A", "thread B", "thread C"].map((th) => (
+                <span
+                  key={th}
+                  className="rounded-lg border border-ink-200/70 bg-white/70 px-3 py-1.5 font-mono text-xs text-ink-500 dark:border-ink-700 dark:bg-ink-900/60 dark:text-ink-300"
+                >
+                  {th}
+                </span>
+              ))}
+            </div>
+            <span className="text-xs text-ink-400">↓ all share ↓</span>
+            <span className="rounded-lg border border-brand-400/60 bg-brand-500/10 px-4 py-2 font-mono text-xs text-brand-700 dark:text-brand-200">
+              long-term store
+            </span>
+          </div>
+        )}
+      </div>
+
+      <dl className="grid gap-x-4 gap-y-2 text-sm sm:grid-cols-[auto_1fr]">
+        <Row k="Scope" v={t.scope} />
+        <Row k="Backed by" v={t.backed} mono />
+        <Row k="Lifetime" v={t.lifetime} />
+        <Row k="Feels like" v={t.example} />
+      </dl>
+    </figure>
+  );
+}
+
+function Row({ k, v, mono }: { k: string; v: string; mono?: boolean }) {
+  return (
+    <>
+      <dt className="font-medium text-ink-400">{k}</dt>
+      <dd
+        className={cn(
+          "text-ink-800 dark:text-ink-100",
+          mono ? "font-mono text-[13px]" : ""
+        )}
+      >
+        {v}
+      </dd>
+    </>
+  );
+}
