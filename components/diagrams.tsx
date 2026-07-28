@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Activity,
   ArrowRight,
@@ -25,8 +25,10 @@ import {
   Layers,
   LayoutDashboard,
   LifeBuoy,
+  Loader2,
   MessageSquare,
   Play,
+  Radio,
   RefreshCw,
   RotateCcw,
   Search,
@@ -2819,5 +2821,197 @@ function Row({ k, v, mono }: { k: string; v: string; mono?: boolean }) {
         {v}
       </dd>
     </>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* 26. TokenStream — streaming vs batch, live                          */
+/* ------------------------------------------------------------------ */
+
+const STREAM_ANSWER =
+  "LangGraph streams tokens as the model generates them, so the answer appears in real time instead of making the user wait for the whole thing.";
+
+export function TokenStream() {
+  const [mode, setMode] = useState<"stream" | "batch">("stream");
+  const [shown, setShown] = useState(0);
+  const [loading, setLoading] = useState(false);
+  const [done, setDone] = useState(false);
+  const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
+
+  const words = STREAM_ANSWER.split(" ");
+
+  const clearAll = () => {
+    timers.current.forEach(clearTimeout);
+    timers.current = [];
+  };
+  useEffect(() => () => clearAll(), []);
+
+  function run() {
+    clearAll();
+    setShown(0);
+    setDone(false);
+    setLoading(false);
+    if (mode === "stream") {
+      words.forEach((_, idx) => {
+        timers.current.push(
+          setTimeout(() => {
+            setShown(idx + 1);
+            if (idx === words.length - 1) setDone(true);
+          }, 65 * (idx + 1))
+        );
+      });
+    } else {
+      setLoading(true);
+      timers.current.push(
+        setTimeout(() => {
+          setLoading(false);
+          setShown(words.length);
+          setDone(true);
+        }, 1900)
+      );
+    }
+  }
+
+  return (
+    <figure className="not-prose my-8 rounded-2xl border border-ink-200/70 bg-[rgb(var(--bg-subtle))] p-5 dark:border-ink-800/70 sm:p-6">
+      <span className="mb-4 inline-flex items-center gap-2 text-sm font-semibold text-ink-900 dark:text-white">
+        <Zap className="h-4 w-4 text-brand-500" />
+        Streaming vs. waiting
+      </span>
+
+      <div className="mb-4 flex flex-wrap items-center gap-3">
+        <div className="inline-flex rounded-xl border border-ink-200 bg-white/70 p-1 dark:border-ink-700 dark:bg-ink-900/60">
+          {(["stream", "batch"] as const).map((m) => (
+            <button
+              key={m}
+              type="button"
+              onClick={() => {
+                setMode(m);
+                clearAll();
+                setShown(0);
+                setDone(false);
+                setLoading(false);
+              }}
+              className={cn(
+                "rounded-lg px-3.5 py-1.5 text-sm font-medium transition-colors",
+                mode === m
+                  ? "bg-brand-600 text-white shadow-sm"
+                  : "text-ink-500 hover:text-ink-800 dark:text-ink-400 dark:hover:text-ink-100"
+              )}
+            >
+              {m === "stream" ? "With streaming" : "Without streaming"}
+            </button>
+          ))}
+        </div>
+        <button
+          type="button"
+          onClick={run}
+          className="inline-flex items-center gap-1.5 rounded-xl bg-brand-600 px-3.5 py-2 text-sm font-semibold text-white transition-colors hover:bg-brand-500"
+        >
+          <Play className="h-4 w-4" /> Run
+        </button>
+      </div>
+
+      <div className="min-h-[7rem] rounded-xl border border-ink-200/70 bg-white/60 p-4 dark:border-ink-800/70 dark:bg-ink-900/40">
+        {loading ? (
+          <span className="inline-flex items-center gap-2 text-sm text-ink-400">
+            <Loader2 className="h-4 w-4 animate-spin" /> Generating… (nothing to
+            show yet)
+          </span>
+        ) : shown === 0 ? (
+          <span className="text-sm text-ink-400">
+            Press <span className="font-medium">Run</span> to compare the two.
+          </span>
+        ) : (
+          <p className="text-[15px] leading-relaxed text-ink-800 dark:text-ink-100">
+            {words.slice(0, shown).join(" ")}
+            {mode === "stream" && !done && (
+              <span className="ml-0.5 inline-block h-4 w-1.5 -translate-y-px animate-pulse bg-brand-500 align-middle" />
+            )}
+          </p>
+        )}
+      </div>
+
+      <figcaption className="mt-3 text-xs text-ink-400">
+        {mode === "stream"
+          ? "First words appear in a fraction of a second — the wait feels instant."
+          : "Nothing appears until the whole response is ready — the user stares at a spinner."}
+      </figcaption>
+    </figure>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* 27. StreamModes — what each stream_mode yields                      */
+/* ------------------------------------------------------------------ */
+
+const STREAM_MODES = [
+  {
+    id: "updates",
+    desc: "What each node returned, right after it runs. Ideal for a step-by-step activity view.",
+    sample: `{'agent': {'messages': [AIMessage('...')]}}`,
+  },
+  {
+    id: "values",
+    desc: "The full accumulated state after each step. Use it to render the whole current picture.",
+    sample: `{'messages': [HumanMessage('Hi'), AIMessage('Hello!')]}`,
+  },
+  {
+    id: "messages",
+    desc: "LLM tokens as they are generated, with metadata — the classic typewriter effect.",
+    sample: `(AIMessageChunk('Lang'), {'langgraph_node': 'agent'})`,
+  },
+  {
+    id: "custom",
+    desc: "Your own progress events, emitted from inside a node via get_stream_writer().",
+    sample: `{'progress': '3/10 documents processed'}`,
+  },
+] as const;
+
+export function StreamModes() {
+  const [id, setId] = useState<string>("updates");
+  const m = STREAM_MODES.find((x) => x.id === id) ?? STREAM_MODES[0];
+
+  return (
+    <figure className="not-prose my-8 rounded-2xl border border-ink-200/70 bg-[rgb(var(--bg-subtle))] p-5 dark:border-ink-800/70 sm:p-6">
+      <span className="mb-4 inline-flex items-center gap-2 text-sm font-semibold text-ink-900 dark:text-white">
+        <Radio className="h-4 w-4 text-brand-500" />
+        The stream modes
+      </span>
+
+      <div className="mb-4 flex flex-wrap gap-2">
+        {STREAM_MODES.map((x) => (
+          <button
+            key={x.id}
+            type="button"
+            onClick={() => setId(x.id)}
+            className={cn(
+              "rounded-lg border px-3 py-1.5 font-mono text-xs font-medium transition-all",
+              id === x.id
+                ? "border-brand-400/70 bg-brand-500/10 text-brand-700 dark:text-brand-200"
+                : "border-ink-200/70 bg-white/60 text-ink-500 hover:border-brand-400/40 dark:border-ink-800/70 dark:bg-ink-900/40 dark:text-ink-400"
+            )}
+          >
+            &quot;{x.id}&quot;
+          </button>
+        ))}
+      </div>
+
+      <div key={id} className="animate-fade-up">
+        <p className="mb-2 font-mono text-xs text-ink-400">
+          for chunk in graph.stream(input, stream_mode=
+          <span className="text-emerald-500 dark:text-emerald-300">
+            &quot;{m.id}&quot;
+          </span>
+          ):
+        </p>
+        <pre className="overflow-x-auto rounded-lg border border-ink-800 bg-ink-950 p-3.5 font-mono text-[13px] text-ink-100">
+          <code># each chunk looks like:{"\n"}{m.sample}</code>
+        </pre>
+        <p className="mt-3 text-sm leading-relaxed text-ink-600 dark:text-ink-300">
+          {m.desc}
+        </p>
+      </div>
+    </figure>
   );
 }

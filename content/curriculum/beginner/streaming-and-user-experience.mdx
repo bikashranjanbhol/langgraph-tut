@@ -1,0 +1,140 @@
+---
+updated: "2026-07-26"
+---
+
+Agents take time — they call models, run tools, and loop. Make the user stare at a spinner and even a fast agent feels slow. **Streaming** fixes that by surfacing progress as it happens: tokens as they're generated, each node's output as it finishes, and your own custom updates. This chapter shows how, and why it matters so much for user experience.
+
+## 12.1 Why streaming matters
+
+Compare the two experiences below. Both produce the exact same answer in the exact same total time — but one feels instant and one feels broken:
+
+<TokenStream />
+
+That difference is entirely perceived speed. Streaming turns dead waiting time into visible progress, which keeps users engaged, lets them start reading immediately, and even lets them cancel early if the answer is going the wrong way. For anything a person watches in real time, streaming isn't a nice-to-have — it's the difference between a product that feels alive and one that feels stuck.
+
+## 12.2 Streaming model tokens
+
+To stream the model's answer token by token, call `graph.stream` (instead of `invoke`) with `stream_mode="messages"`. Each chunk is a `(message_chunk, metadata)` tuple, and the chunk carries incremental `content`:
+
+```python
+for token, metadata in graph.stream(inputs, stream_mode="messages"):
+    if token.content:
+        print(token.content, end="", flush=True)
+```
+
+That's the classic typewriter effect. The `metadata` tells you which node and model produced each token, which matters when several nodes stream at once (more in a moment).
+
+## 12.3 Streaming graph updates
+
+Sometimes you want to show *what the agent is doing*, not the tokens. `stream_mode="updates"` yields each node's output as it finishes — a dict keyed by node name:
+
+```python
+for chunk in graph.stream(inputs, stream_mode="updates"):
+    for node_name, update in chunk.items():
+        print(f"[{node_name}] finished")
+```
+
+This is ideal for a step-by-step activity view — "searching…", "reading…", "writing…" — that shows the agent making progress through the graph.
+
+## 12.4 Streaming state values
+
+`stream_mode="values"` streams the **entire accumulated state** after each step, rather than just the delta. Use it when you want to render the whole current picture each time:
+
+```python
+for state in graph.stream(inputs, stream_mode="values"):
+    print(state["messages"][-1])   # latest message at each step
+```
+
+Here's how the main modes compare — click through them:
+
+<StreamModes />
+
+## 12.5 Displaying progress messages
+
+For long-running work *inside* a node — processing a batch, crawling pages — you'll want to report progress that isn't a token or a node boundary. Emit your own events with the stream writer, and read them with `stream_mode="custom"`:
+
+```python
+from langgraph.config import get_stream_writer
+
+
+def process(state: State) -> dict:
+    writer = get_stream_writer()
+    for i, item in enumerate(items):
+        do_work(item)
+        writer({"progress": f"{i + 1}/{len(items)} processed"})
+    return {"done": True}
+```
+
+```python
+for chunk in graph.stream(inputs, stream_mode="custom"):
+    print(chunk)   # {"progress": "1/10 processed"}, ...
+```
+
+This is the clean way to drive a progress bar or status line from within your logic.
+
+## 12.6 Handling partial output
+
+Streamed chunks are, by definition, **partial** — you receive fragments and assemble them. A few things to keep in mind:
+
+- **Accumulate as you go.** For token streaming, append each chunk's `content` to build the full text.
+- **Filter by node.** In multi-node graphs, several LLMs may stream at once. Use the metadata to show only the tokens you care about:
+
+  ```python
+  for token, meta in graph.stream(inputs, stream_mode="messages"):
+      if meta["langgraph_node"] == "final_answer":
+          print(token.content, end="", flush=True)
+  ```
+
+- **Combine modes.** Pass a list to get several streams at once; each item becomes a `(mode, data)` tuple so you can tell them apart:
+
+  ```python
+  for mode, data in graph.stream(inputs, stream_mode=["messages", "updates"]):
+      ...
+  ```
+
+A typical UI streams `messages` for the live answer and `updates` (or `custom`) for a side panel of activity.
+
+## 12.7 Streaming errors
+
+An agent can fail *mid-stream* — after you've already shown some output. Handle it so the interface degrades gracefully instead of freezing:
+
+```python
+try:
+    for token, meta in graph.stream(inputs, stream_mode="messages"):
+        render(token.content)
+except Exception as e:
+    render_error(f"Something went wrong: {e}")
+```
+
+The partial output you already streamed stays on screen; you just append an error notice. For fine-grained visibility into everything happening inside the graph — model start/end, tool start/end, errors — use `astream_events`, which emits a detailed event for each.
+
+<Callout type="tip" title="Design for interruption">
+Because streaming shows output as it's produced, users will sometimes want to stop early. Build a cancel path (break out of the stream loop) so a wrong-headed answer can be aborted instead of run to completion — it's one of streaming's underrated wins.
+</Callout>
+
+## 12.8 Building a simple streaming interface
+
+Let's put it together into a console chat that streams the assistant's reply as it types. We use the async `astream` and filter to the node we want to show:
+
+```python
+async def chat(graph, user_input, config):
+    print("Assistant: ", end="", flush=True)
+    async for mode, data in graph.astream(
+        {"messages": [("user", user_input)]},
+        config,
+        stream_mode=["messages", "updates"],
+    ):
+        if mode == "messages":
+            token, meta = data
+            if meta["langgraph_node"] == "chatbot" and token.content:
+                print(token.content, end="", flush=True)
+        elif mode == "updates":
+            pass  # could update a status line here
+    print()
+```
+
+The same idea powers a web UI: instead of `print`, you push each token to the browser over Server-Sent Events or a WebSocket, and the frontend appends it to the message as it arrives.
+
+<Callout type="success" title="Your agents feel fast now">
+You can stream tokens, node updates, full state, and custom progress — and handle partial output and errors along the way. That covers the user-experience essentials. Next we make agents easier to build and fix with <strong>debugging and basic observability</strong>.
+</Callout>
