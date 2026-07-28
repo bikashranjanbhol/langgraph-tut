@@ -1,19 +1,103 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   ArrowRight,
   Check,
+  ChevronRight,
   Database,
   Eye,
   EyeOff,
   GitMerge,
   Layers,
+  Pause,
+  Play,
   RefreshCw,
   Shield,
   Workflow,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+
+function useDiagramStepper(length: number, initialIndex = 0) {
+  const [index, setIndex] = useState(initialIndex);
+  const [playing, setPlaying] = useState(false);
+
+  useEffect(() => {
+    if (!playing) return;
+
+    const timer = window.setInterval(() => {
+      setIndex((current) => (current + 1) % length);
+    }, 2200);
+
+    return () => window.clearInterval(timer);
+  }, [length, playing]);
+
+  function select(nextIndex: number) {
+    setPlaying(false);
+    setIndex(nextIndex);
+  }
+
+  function next() {
+    setPlaying(false);
+    setIndex((current) => (current + 1) % length);
+  }
+
+  return {
+    index,
+    playing,
+    select,
+    next,
+    togglePlaying: () => setPlaying((current) => !current),
+  };
+}
+
+function DiagramControls({
+  index,
+  total,
+  playing,
+  onTogglePlaying,
+  onNext,
+}: {
+  index: number;
+  total: number;
+  playing: boolean;
+  onTogglePlaying: () => void;
+  onNext: () => void;
+}) {
+  return (
+    <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-ink-200/70 bg-white/60 px-3 py-2 dark:border-ink-800/70 dark:bg-ink-900/40">
+      <span
+        aria-live="polite"
+        className="text-xs font-medium text-ink-500 dark:text-ink-400"
+      >
+        Step {index + 1} of {total}
+      </span>
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={onTogglePlaying}
+          aria-pressed={playing}
+          className="inline-flex items-center gap-1.5 rounded-lg border border-brand-400/40 bg-brand-500/10 px-3 py-1.5 text-xs font-semibold text-brand-700 transition-colors hover:bg-brand-500/15 dark:text-brand-300"
+        >
+          {playing ? (
+            <Pause className="h-3.5 w-3.5" />
+          ) : (
+            <Play className="h-3.5 w-3.5" />
+          )}
+          {playing ? "Pause" : "Play"}
+        </button>
+        <button
+          type="button"
+          onClick={onNext}
+          className="inline-flex items-center gap-1 rounded-lg border border-ink-200 bg-white px-3 py-1.5 text-xs font-semibold text-ink-700 transition-colors hover:border-brand-400/50 hover:text-brand-600 dark:border-ink-700 dark:bg-ink-950 dark:text-ink-200 dark:hover:text-brand-300"
+        >
+          Next
+          <ChevronRight className="h-3.5 w-3.5" />
+        </button>
+      </div>
+    </div>
+  );
+}
 
 /* ------------------------------------------------------------------ */
 /* StateBoundaryExplorer — input, internal, private, and output state  */
@@ -62,11 +146,9 @@ const STATE_SCOPES = [
   },
 ] as const;
 
-type StateScopeKey = (typeof STATE_SCOPES)[number]["key"];
-
 export function StateBoundaryExplorer() {
-  const [key, setKey] = useState<StateScopeKey>("internal");
-  const scope = STATE_SCOPES.find((item) => item.key === key) ?? STATE_SCOPES[0];
+  const stepper = useDiagramStepper(STATE_SCOPES.length, 1);
+  const scope = STATE_SCOPES[stepper.index];
   const Icon = scope.icon;
 
   return (
@@ -77,14 +159,14 @@ export function StateBoundaryExplorer() {
       </div>
 
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-        {STATE_SCOPES.map((item) => (
+        {STATE_SCOPES.map((item, index) => (
           <button
             key={item.key}
             type="button"
-            onClick={() => setKey(item.key)}
+            onClick={() => stepper.select(index)}
             className={cn(
               "rounded-lg border px-3 py-2 text-sm font-semibold transition-all",
-              key === item.key
+              stepper.index === index
                 ? "border-brand-400/70 bg-brand-500/10 text-brand-700 dark:text-brand-200"
                 : "border-ink-200/70 bg-white/60 text-ink-500 hover:border-brand-400/40 dark:border-ink-800/70 dark:bg-ink-900/40"
             )}
@@ -93,6 +175,14 @@ export function StateBoundaryExplorer() {
           </button>
         ))}
       </div>
+
+      <DiagramControls
+        index={stepper.index}
+        total={STATE_SCOPES.length}
+        playing={stepper.playing}
+        onTogglePlaying={stepper.togglePlaying}
+        onNext={stepper.next}
+      />
 
       <div
         key={scope.key}
@@ -186,12 +276,9 @@ const REDUCER_CASES = [
   },
 ] as const;
 
-type ReducerKey = (typeof REDUCER_CASES)[number]["key"];
-
 export function ReducerPlayground() {
-  const [key, setKey] = useState<ReducerKey>("append");
-  const example =
-    REDUCER_CASES.find((item) => item.key === key) ?? REDUCER_CASES[0];
+  const stepper = useDiagramStepper(REDUCER_CASES.length, 1);
+  const example = REDUCER_CASES[stepper.index];
 
   return (
     <figure className="not-prose my-8 rounded-2xl border border-ink-200/70 bg-[rgb(var(--bg-subtle))] p-5 dark:border-ink-800/70 sm:p-6">
@@ -201,14 +288,14 @@ export function ReducerPlayground() {
       </div>
 
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-        {REDUCER_CASES.map((item) => (
+        {REDUCER_CASES.map((item, index) => (
           <button
             key={item.key}
             type="button"
-            onClick={() => setKey(item.key)}
+            onClick={() => stepper.select(index)}
             className={cn(
               "rounded-lg border px-2 py-2 text-sm font-semibold transition-all",
-              key === item.key
+              stepper.index === index
                 ? "border-brand-400/70 bg-brand-500/10 text-brand-700 dark:text-brand-200"
                 : "border-ink-200/70 bg-white/60 text-ink-500 hover:border-brand-400/40 dark:border-ink-800/70 dark:bg-ink-900/40"
             )}
@@ -217,6 +304,14 @@ export function ReducerPlayground() {
           </button>
         ))}
       </div>
+
+      <DiagramControls
+        index={stepper.index}
+        total={REDUCER_CASES.length}
+        playing={stepper.playing}
+        onTogglePlaying={stepper.togglePlaying}
+        onNext={stepper.next}
+      />
 
       <div key={example.key} className="mt-4 animate-fade-up">
         <code className="block overflow-x-auto rounded-lg bg-ink-950 px-3 py-2 text-xs text-emerald-300">
@@ -306,9 +401,11 @@ const STATE_SHAPES = {
 } as const;
 
 type StateShapeKey = keyof typeof STATE_SHAPES;
+const STATE_SHAPE_KEYS = Object.keys(STATE_SHAPES) as StateShapeKey[];
 
 export function StateShapeAudit() {
-  const [key, setKey] = useState<StateShapeKey>("lean");
+  const stepper = useDiagramStepper(STATE_SHAPE_KEYS.length, 1);
+  const key = STATE_SHAPE_KEYS[stepper.index];
   const shape = STATE_SHAPES[key];
 
   return (
@@ -319,14 +416,14 @@ export function StateShapeAudit() {
           Checkpoint state audit
         </span>
         <div className="inline-flex rounded-lg border border-ink-200/70 p-0.5 dark:border-ink-800/70">
-          {(Object.keys(STATE_SHAPES) as StateShapeKey[]).map((shapeKey) => (
+          {STATE_SHAPE_KEYS.map((shapeKey, index) => (
             <button
               key={shapeKey}
               type="button"
-              onClick={() => setKey(shapeKey)}
+              onClick={() => stepper.select(index)}
               className={cn(
                 "rounded-md px-3 py-1 text-xs font-medium transition-colors",
-                key === shapeKey
+                stepper.index === index
                   ? "bg-brand-500/15 text-brand-700 dark:text-brand-300"
                   : "text-ink-400 hover:text-brand-600"
               )}
@@ -337,7 +434,15 @@ export function StateShapeAudit() {
         </div>
       </div>
 
-      <div key={key} className="animate-fade-up">
+      <DiagramControls
+        index={stepper.index}
+        total={STATE_SHAPE_KEYS.length}
+        playing={stepper.playing}
+        onTogglePlaying={stepper.togglePlaying}
+        onNext={stepper.next}
+      />
+
+      <div key={key} className="mt-4 animate-fade-up">
         <div className="mb-3 flex items-center justify-between gap-3">
           <span className="text-sm font-semibold text-ink-800 dark:text-ink-100">
             {shape.label}
