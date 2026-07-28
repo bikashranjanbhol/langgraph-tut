@@ -225,3 +225,8 @@ html:not(.dark) [data-rehype-pretty-code-figure] code span {
 ::-webkit-scrollbar-thumb:hover {
   background-color: rgb(148 163 184 / 0.6);
 }
+
+/* Align markdown table headers with their (left-aligned) cell data. */
+.prose th {
+  text-align: left;
+}
