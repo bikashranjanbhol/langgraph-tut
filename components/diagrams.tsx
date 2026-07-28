@@ -4162,7 +4162,7 @@ export function OrchestrationSplit() {
             </span>
             <ArrowDown className="h-7 w-7" strokeWidth={2.25} />
           </div>
-          <div className="rounded-xl border border-ink-200/70 bg-white/50 p-4 dark:border-ink-800/70 dark:bg-ink-900/40">
+          <div className="rounded-xl border border-ink-300/60 bg-ink-100/80 p-4 dark:border-ink-700/60 dark:bg-ink-800/50">
             <p className="mb-3 text-center text-xs font-semibold uppercase tracking-wide text-ink-500">
               Services · business logic (plain Python)
             </p>
