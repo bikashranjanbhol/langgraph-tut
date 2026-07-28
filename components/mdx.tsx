@@ -4,6 +4,7 @@ import { AlertTriangle, Info, Lightbulb, CheckCircle2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   AgentLoop,
+  ApiComparison,
   AutonomySpectrum,
   CapstoneBuilder,
   ConditionalRouter,
@@ -19,6 +20,7 @@ import {
   MessageTypes,
   NodeAnatomy,
   OrchestrationDiagram,
+  OrchestrationSplit,
   PatternGallery,
   ProjectExplorer,
   ProjectTree,
@@ -35,6 +37,7 @@ import {
   UseCaseGrid,
   VenvSetup,
   WhenToUse,
+  WorkflowVsAgent,
 } from "@/components/diagrams";
 
 type CalloutType = "note" | "tip" | "warning" | "success";
@@ -135,6 +138,7 @@ export const mdxComponents: MDXComponents = {
   ),
   Callout,
   AgentLoop,
+  ApiComparison,
   AutonomySpectrum,
   CapstoneBuilder,
   ConditionalRouter,
@@ -150,6 +154,7 @@ export const mdxComponents: MDXComponents = {
   MessageTypes,
   NodeAnatomy,
   OrchestrationDiagram,
+  OrchestrationSplit,
   PatternGallery,
   ProjectExplorer,
   ProjectTree,
@@ -166,4 +171,5 @@ export const mdxComponents: MDXComponents = {
   UseCaseGrid,
   VenvSetup,
   WhenToUse,
+  WorkflowVsAgent,
 };

@@ -4063,3 +4063,349 @@ export function ProjectExplorer() {
     </figure>
   );
 }
+
+/* ------------------------------------------------------------------ */
+/* 33. OrchestrationSplit — logic in the node vs. a service layer      */
+/* ------------------------------------------------------------------ */
+
+export function OrchestrationSplit() {
+  const [split, setSplit] = useState(true);
+
+  return (
+    <figure className="not-prose my-8 rounded-2xl border border-ink-200/70 bg-[rgb(var(--bg-subtle))] p-5 dark:border-ink-800/70 sm:p-6">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <span className="inline-flex items-center gap-2 text-sm font-semibold text-ink-900 dark:text-white">
+          <Layers className="h-4 w-4 text-brand-500" />
+          Orchestration vs. business logic
+        </span>
+        <div className="inline-flex rounded-lg border border-ink-200/70 p-0.5 dark:border-ink-800/70">
+          <button
+            type="button"
+            onClick={() => setSplit(false)}
+            className={cn(
+              "rounded-md px-3 py-1 text-xs font-medium transition-colors",
+              !split
+                ? "bg-amber-500/15 text-amber-700 dark:text-amber-300"
+                : "text-ink-400 hover:text-brand-600"
+            )}
+          >
+            One fat node
+          </button>
+          <button
+            type="button"
+            onClick={() => setSplit(true)}
+            className={cn(
+              "rounded-md px-3 py-1 text-xs font-medium transition-colors",
+              split
+                ? "bg-brand-500/15 text-brand-700 dark:text-brand-300"
+                : "text-ink-400 hover:text-brand-600"
+            )}
+          >
+            Orchestration + logic
+          </button>
+        </div>
+      </div>
+
+      {!split ? (
+        <div key="fat" className="animate-fade-up">
+          <div className="mx-auto max-w-md rounded-xl border-2 border-amber-500/50 bg-amber-500/5 p-4">
+            <p className="mb-3 text-center font-mono text-xs font-semibold text-amber-700 dark:text-amber-300">
+              def answer(state): # does everything
+            </p>
+            <div className="flex flex-wrap justify-center gap-1.5">
+              {[
+                "parse input",
+                "validate",
+                "query the DB",
+                "build the prompt",
+                "call the LLM",
+                "format reply",
+                "handle errors",
+                "log",
+              ].map((r) => (
+                <span
+                  key={r}
+                  className="rounded-md border border-amber-500/40 bg-white/70 px-2 py-1 font-mono text-[11px] text-ink-700 dark:bg-ink-900/50 dark:text-ink-200"
+                >
+                  {r}
+                </span>
+              ))}
+            </div>
+          </div>
+          <ul className="mx-auto mt-4 max-w-md space-y-1.5 text-sm text-ink-600 dark:text-ink-300">
+            <li>· Can&apos;t test the DB lookup without running the whole graph.</li>
+            <li>· The logic can&apos;t be reused outside this node.</li>
+            <li>· One change risks breaking unrelated concerns.</li>
+          </ul>
+        </div>
+      ) : (
+        <div key="split" className="animate-fade-up space-y-3">
+          <div className="rounded-xl border border-brand-400/40 bg-brand-500/5 p-4">
+            <p className="mb-3 text-center text-xs font-semibold uppercase tracking-wide text-brand-600 dark:text-brand-300">
+              Graph · orchestration (thin nodes)
+            </p>
+            <div className="flex flex-wrap items-center justify-center gap-1.5">
+              <Chip label="START" terminal />
+              <Ar />
+              <Chip label="classify" />
+              <Ar />
+              <Chip label="answer" />
+              <Ar />
+              <Chip label="END" terminal />
+            </div>
+          </div>
+          <div className="flex justify-center gap-10 text-ink-300">
+            <ArrowRight className="h-4 w-4 rotate-90" />
+            <ArrowRight className="h-4 w-4 rotate-90" />
+          </div>
+          <div className="rounded-xl border border-ink-200/70 bg-white/50 p-4 dark:border-ink-800/70 dark:bg-ink-900/40">
+            <p className="mb-3 text-center text-xs font-semibold uppercase tracking-wide text-ink-500">
+              Services · business logic (plain Python)
+            </p>
+            <div className="flex flex-wrap items-center justify-center gap-2">
+              {["classifier.py", "orders.py", "llm.py", "formatting.py"].map(
+                (s) => (
+                  <span
+                    key={s}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-ink-200/70 bg-white/70 px-3 py-1.5 font-mono text-xs text-ink-700 dark:border-ink-800/70 dark:bg-ink-900/60 dark:text-ink-200"
+                  >
+                    <Wrench className="h-3 w-3 text-brand-400" />
+                    {s}
+                  </span>
+                )
+              )}
+            </div>
+          </div>
+          <ul className="mx-auto max-w-lg space-y-1.5 text-sm text-ink-600 dark:text-ink-300">
+            <li>· Each service is a plain function you can unit-test on its own.</li>
+            <li>· Nodes stay thin — they wire services together, nothing more.</li>
+            <li>· Swap an implementation without touching the graph.</li>
+          </ul>
+        </div>
+      )}
+
+      <figcaption className="mt-4 text-center text-xs text-ink-400">
+        The graph decides <em>what runs when</em>; services decide{" "}
+        <em>how each step works</em>. Keep them apart.
+      </figcaption>
+    </figure>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* 34. WorkflowVsAgent — who controls the flow, you or the model       */
+/* ------------------------------------------------------------------ */
+
+const WVA_STOPS = [
+  {
+    key: "workflow",
+    label: "Workflow",
+    control: "You do",
+    predictability: "High",
+    tone: "brand" as const,
+    desc: "You wire the path explicitly with edges. The model fills in steps, but never decides the route.",
+    example: "Extract → translate → summarise; a fixed router.",
+    shape: "Fixed edges you author by hand.",
+  },
+  {
+    key: "hybrid",
+    label: "Hybrid",
+    control: "Shared",
+    predictability: "Medium",
+    tone: "sky" as const,
+    desc: "A mostly-fixed graph with a bounded agent loop inside one branch. Structure where you can, freedom where you must.",
+    example: "A pipeline whose 'research' step is a small tool-using agent.",
+    shape: "Authored graph + a contained loop.",
+  },
+  {
+    key: "agent",
+    label: "Agent",
+    control: "The model does",
+    predictability: "Low",
+    tone: "amber" as const,
+    desc: "The model chooses the next action each step, looping over tools until done. Most flexible, least predictable.",
+    example: "Open-ended research or debugging where steps aren't known.",
+    shape: "A tool loop driven by the model.",
+  },
+];
+
+export function WorkflowVsAgent() {
+  const [i, setI] = useState(0);
+  const s = WVA_STOPS[i];
+  const toneText =
+    s.tone === "brand"
+      ? "text-brand-700 dark:text-brand-300"
+      : s.tone === "sky"
+        ? "text-sky-700 dark:text-sky-300"
+        : "text-amber-700 dark:text-amber-300";
+
+  return (
+    <figure className="not-prose my-8 rounded-2xl border border-ink-200/70 bg-[rgb(var(--bg-subtle))] p-5 dark:border-ink-800/70 sm:p-6">
+      <span className="mb-4 inline-flex items-center gap-2 text-sm font-semibold text-ink-900 dark:text-white">
+        <SlidersHorizontal className="h-4 w-4 text-brand-500" />
+        Who controls the flow?
+      </span>
+
+      {/* spectrum bar */}
+      <div className="mb-2 flex items-center justify-between text-[11px] font-medium text-ink-400">
+        <span>You author the path</span>
+        <span>The model decides</span>
+      </div>
+      <div className="relative mb-5 h-2 rounded-full bg-gradient-to-r from-brand-400/60 via-sky-400/60 to-amber-400/70">
+        <div
+          className="absolute top-1/2 h-4 w-4 -translate-y-1/2 rounded-full border-2 border-white bg-ink-800 shadow transition-all dark:border-ink-950 dark:bg-white"
+          style={{ left: `calc(${(i / (WVA_STOPS.length - 1)) * 100}% - 8px)` }}
+        />
+      </div>
+
+      <div className="mb-4 grid grid-cols-3 gap-2">
+        {WVA_STOPS.map((x, idx) => (
+          <button
+            key={x.key}
+            type="button"
+            onClick={() => setI(idx)}
+            className={cn(
+              "rounded-lg border px-2 py-2 text-sm font-semibold transition-all",
+              i === idx
+                ? "border-brand-400/70 bg-brand-500/10 text-brand-700 dark:text-brand-200"
+                : "border-ink-200/70 bg-white/60 text-ink-500 hover:border-brand-400/40 dark:border-ink-800/70 dark:bg-ink-900/40"
+            )}
+          >
+            {x.label}
+          </button>
+        ))}
+      </div>
+
+      <div
+        key={s.key}
+        className="animate-fade-up rounded-xl border border-ink-200/70 bg-white/50 p-4 dark:border-ink-800/70 dark:bg-ink-900/40"
+      >
+        <div className="mb-3 flex flex-wrap gap-x-6 gap-y-2 text-sm">
+          <span className="text-ink-500 dark:text-ink-400">
+            Control flow:{" "}
+            <span className={cn("font-semibold", toneText)}>{s.control}</span>
+          </span>
+          <span className="text-ink-500 dark:text-ink-400">
+            Predictability:{" "}
+            <span className={cn("font-semibold", toneText)}>
+              {s.predictability}
+            </span>
+          </span>
+        </div>
+        <p className="text-sm leading-relaxed text-ink-700 dark:text-ink-200">
+          {s.desc}
+        </p>
+        <p className="mt-3 text-sm text-ink-500 dark:text-ink-400">
+          <span className="font-medium text-ink-700 dark:text-ink-200">
+            Reach for it:
+          </span>{" "}
+          {s.example}
+        </p>
+      </div>
+
+      <figcaption className="mt-4 text-center text-xs text-ink-400">
+        Prefer the leftmost option that expresses your task — move right only
+        when you genuinely need the model to decide.
+      </figcaption>
+    </figure>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* 35. ApiComparison — the same graph in Graph API vs Functional API   */
+/* ------------------------------------------------------------------ */
+
+const API_TABS = [
+  {
+    key: "graph",
+    label: "Graph API",
+    blurb:
+      "You declare nodes and edges explicitly. The structure is a first-class object you can inspect, visualise, and reason about.",
+    code: [
+      "from langgraph.graph import StateGraph, START, END",
+      "",
+      "builder = StateGraph(State)",
+      'builder.add_node("classify", classify)',
+      'builder.add_node("answer", answer)',
+      "",
+      'builder.add_edge(START, "classify")',
+      'builder.add_edge("classify", "answer")',
+      'builder.add_edge("answer", END)',
+      "",
+      "graph = builder.compile()",
+    ],
+    good: "Branching, loops, parallelism, and anything you want to visualise.",
+  },
+  {
+    key: "func",
+    label: "Functional API",
+    blurb:
+      "You write ordinary Python control flow. @task marks the steps and @entrypoint gives you persistence, streaming, and retries.",
+    code: [
+      "from langgraph.func import entrypoint, task",
+      "",
+      "@task",
+      "def classify(text): ...",
+      "",
+      "@task",
+      "def answer(text, category): ...",
+      "",
+      "@entrypoint(checkpointer=MemorySaver())",
+      "def graph(text):",
+      "    category = classify(text).result()",
+      "    return answer(text, category).result()",
+    ],
+    good: "Mostly-linear logic where plain if/for reads more naturally than a graph.",
+  },
+] as const;
+
+export function ApiComparison() {
+  const [key, setKey] = useState<string>("graph");
+  const t = API_TABS.find((x) => x.key === key) ?? API_TABS[0];
+
+  return (
+    <figure className="not-prose my-8 rounded-2xl border border-ink-200/70 bg-[rgb(var(--bg-subtle))] p-5 dark:border-ink-800/70 sm:p-6">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <span className="inline-flex items-center gap-2 text-sm font-semibold text-ink-900 dark:text-white">
+          <Code2 className="h-4 w-4 text-brand-500" />
+          One graph, two APIs
+        </span>
+        <div className="inline-flex rounded-lg border border-ink-200/70 p-0.5 dark:border-ink-800/70">
+          {API_TABS.map((x) => (
+            <button
+              key={x.key}
+              type="button"
+              onClick={() => setKey(x.key)}
+              className={cn(
+                "rounded-md px-3 py-1 text-xs font-medium transition-colors",
+                key === x.key
+                  ? "bg-brand-500/15 text-brand-700 dark:text-brand-300"
+                  : "text-ink-400 hover:text-brand-600"
+              )}
+            >
+              {x.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div key={t.key} className="animate-fade-up">
+        <p className="mb-3 text-sm leading-relaxed text-ink-600 dark:text-ink-300">
+          {t.blurb}
+        </p>
+        <MiniCode lines={[...t.code]} />
+        <p className="mt-3 text-sm text-ink-500 dark:text-ink-400">
+          <span className="font-medium text-brand-600 dark:text-brand-300">
+            Best for:
+          </span>{" "}
+          {t.good}
+        </p>
+      </div>
+
+      <figcaption className="mt-4 text-center text-xs text-ink-400">
+        Both compile to the same runtime — same state, persistence, and
+        streaming. Pick whichever expresses <em>this</em> graph most clearly.
+      </figcaption>
+    </figure>
+  );
+}

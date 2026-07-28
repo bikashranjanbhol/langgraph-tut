@@ -1,0 +1,117 @@
+---
+updated: "2026-07-28"
+---
+
+Welcome to Part II. In Part I you learned the mechanics — state, nodes, edges, tools, memory, streaming — and built a working agent. This part is about building agents that *survive contact with the real world*: applications other people maintain, extend, and rely on. Before we add new capabilities, this chapter reviews the fundamentals through an **architect's lens** and establishes the design principles the rest of Part II builds on.
+
+## 1.1 Reviewing LangGraph fundamentals
+
+Everything in Part I reduces to a handful of ideas. Keep them sharp, because Part II leans on all of them:
+
+- **State** — a typed, shared object (usually a `TypedDict`) that flows through the graph. Nodes read it and return partial updates.
+- **Nodes** — plain functions that take state and return an update. They hold your work.
+- **Edges** — the wiring. Normal edges are fixed; **conditional edges** call a routing function to choose the next node.
+- **Reducers** — how updates merge into a channel (overwrite by default; `add_messages` appends).
+- **Compile & run** — `builder.compile()` turns the definition into a runnable, optionally with a **checkpointer** for memory.
+- **The super-step model** — the graph advances in discrete steps; nodes on the same step can run in parallel.
+
+If any of these feel shaky, revisit the relevant Part I chapter now — the intermediate material assumes they're second nature.
+
+## 1.2 From prototypes to maintainable applications
+
+A prototype and a maintainable application can produce the *same output* and be worlds apart in quality. The prototype proves an idea works; the application has to keep working as requirements change and a team touches the code. The differences are architectural:
+
+| Prototype | Maintainable application |
+| --- | --- |
+| One file, everything inline | Clear modules with single responsibilities |
+| Logic hard-coded in nodes | Business logic in a testable service layer |
+| Implicit, sprawling state | A deliberate, documented state schema |
+| "It ran on my machine" | Tests, tracing, and reproducible config |
+| Structure emerges by accident | Boundaries chosen on purpose |
+
+The rest of this chapter is about that right-hand column. None of it changes what your agent *does* — it changes how easily you can *keep changing* it.
+
+<Callout type="note" title="You don't need all of this on day one">
+Architecture is a spectrum, not a switch. A weekend project doesn't need a service layer. But knowing where the line is lets you cross it deliberately, when the app earns it — instead of waking up inside a tangle.
+</Callout>
+
+## 1.3 Separating orchestration from business logic
+
+This is the single most important habit in Part II. **Orchestration** is *what runs when* — the graph, its nodes and edges. **Business logic** is *how each step actually works* — the database query, the prompt construction, the parsing, the formatting.
+
+When you cram business logic *inside* your nodes, the two become impossible to separate. When you push logic into a **service layer** and keep nodes thin, each can be understood, tested, and changed on its own. Flip between the two below:
+
+<OrchestrationSplit />
+
+The rule of thumb: **a node should read like a table of contents.** It calls a service, puts the result in the state, and returns. If a node contains a nested loop, a SQL string, and prompt engineering, that logic wants to live in a function the node merely calls.
+
+```python
+# thin node — orchestration only
+def answer(state: State) -> dict:
+    reply = support_service.answer(state["messages"])   # logic lives here
+    return {"messages": [reply]}
+```
+
+## 1.4 Designing graph boundaries
+
+A **boundary** is where you decide "this is one graph." Draw it around a *cohesive unit of work* — a piece of the system with a clear job, its own state shape, and a meaningful input and output. Some signals you've drawn a good boundary:
+
+- The graph has **one clear responsibility** you can name in a sentence.
+- Its **state schema** is focused, not a grab-bag of unrelated fields.
+- It has a **stable interface** — a well-defined input and output — so callers don't depend on its internals.
+- You could **test it in isolation** with a simple input.
+
+When a graph starts doing two unrelated jobs, that's your cue to split it — often into **subgraphs** (Chapter 7), each a reusable unit with its own boundary. Good boundaries are what let a system grow without every part entangling with every other.
+
+## 1.5 State ownership
+
+As applications grow, the question *"who is allowed to write this channel?"* becomes critical. Unclear ownership is how you end up with two nodes fighting over the same field and race-condition bugs that only appear under parallelism.
+
+Make ownership explicit:
+
+- **Give each channel a clear owner** — ideally one node (or one logical step) writes it; others only read.
+- **Use reducers deliberately** for channels that *must* accept concurrent writes, so merges are defined, not accidental (Chapter 2 goes deep on this).
+- **Separate public from private state.** Some channels are the graph's interface; others are internal scratch space. Distinguishing them keeps callers from depending on internals (Chapter 2).
+- **Keep the state lean.** Every channel is shared mutable state — the fewer, the clearer. Don't store what you can derive.
+
+Thinking in terms of ownership turns the state from a shared dumping ground into a set of channels with rules.
+
+## 1.6 Dependency management
+
+Nodes need things from the outside world — a model client, a database connection, an API key, a vector store. *How* those dependencies reach your nodes matters as much as the graph itself.
+
+- **Inject dependencies; don't hard-code them.** A node that constructs its own database client is impossible to test in isolation. Pass configuration and clients in through `config` (`RunnableConfig`) or a context object, so tests can substitute fakes.
+- **Keep secrets out of state.** API keys and tokens belong in the environment or config — never in a channel, where they'd be checkpointed, traced, and logged (a lesson from Chapter 13).
+- **Centralise construction.** Build clients once, in one place, and share them — rather than reconstructing them in every node.
+- **Depend on interfaces, not implementations.** A node that calls `retriever.search(...)` doesn't care whether that's an in-memory store or a production vector DB — which makes both testing and swapping trivial.
+
+Managed well, dependencies become seams you can test at and change behind — instead of hard-wiring that fights you later.
+
+## 1.7 Choosing between workflows and agents
+
+A recurring intermediate decision: how much control do you hand to the model? A **workflow** is a graph whose path *you* author with edges. An **agent** lets the *model* choose the next action each step. Most real systems sit somewhere on the spectrum between them — drag through it:
+
+<WorkflowVsAgent />
+
+The guiding principle from Chapter 14 still holds, now with an architectural edge: **prefer the most structured option that expresses your task.** Workflows are predictable, cheap, and easy to test; agents are flexible but harder to constrain, debug, and cost-control. Reach for agent autonomy only where the task genuinely can't be expressed as a fixed path — and even then, prefer a *hybrid* that contains the agent inside an otherwise-structured graph.
+
+## 1.8 Graph API versus Functional API
+
+LangGraph offers two ways to define the same runtime. The **Graph API** (everything in Part I) declares nodes and edges explicitly. The **Functional API** lets you write ordinary Python control flow, marking steps with `@task` and the entry point with `@entrypoint`. Compare the same two-step graph in both:
+
+<ApiComparison />
+
+They compile to the **same runtime** — identical state, persistence, streaming, and human-in-the-loop support. The choice is about *expressiveness*:
+
+- **Graph API** shines when structure matters — branching, loops, parallelism, and anything you want to *visualise* as a diagram. The graph is an object you can inspect.
+- **Functional API** shines for mostly-linear logic where plain `if`/`for` reads more naturally than assembling edges, and you want persistence without drawing a graph.
+
+You can even mix them — call a Functional entrypoint from a graph node, or vice versa. Part II uses the Graph API throughout (it makes structure explicit, which is the whole point of these chapters), but knowing the Functional API exists means you'll recognise when it's the cleaner fit.
+
+<Callout type="tip" title="Architecture is leverage">
+Every principle here — separation, boundaries, ownership, injection — has the same payoff: it makes *change* cheap. You're not building for today's requirements; you're building so tomorrow's requirements don't require a rewrite.
+</Callout>
+
+<Callout type="success" title="You now have an architect's lens">
+Separate orchestration from logic, draw clean graph boundaries, own your state, inject dependencies, and choose the right level of autonomy and the right API. With these principles in hand, the rest of Part II adds real capability on a foundation that can hold it. Next: <strong>advanced state design</strong>.
+</Callout>
