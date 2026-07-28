@@ -1,0 +1,199 @@
+---
+updated: "2026-07-28"
+---
+
+This is where Part I comes together. You've learned state, nodes, edges, tools, memory, streaming, debugging, and design patterns — now you'll use *all of it* to build one real application from scratch. This chapter is a blueprint you can follow end to end, and the suggested project is a **customer-support assistant** that classifies messages, answers with tools, remembers each customer, and streams its replies.
+
+Here's the whole build, one capability at a time — step through it:
+
+<CapstoneBuilder />
+
+Notice the shape: you don't build everything at once. You get a minimal graph working, then layer on tools, memory, and streaming one at a time, testing after each. Let's walk the steps.
+
+## 15.1 Project requirements
+
+Every project starts by deciding *what it must do* — before any code. Good requirements are concrete and testable. For the support assistant:
+
+- **Answer product questions** from a knowledge base or the model's general knowledge.
+- **Look up order status** by ID using a tool.
+- **Escalate complaints** to a human instead of trying to resolve them alone.
+- **Remember the conversation** so a customer can ask follow-ups.
+- **Stream responses** so replies feel immediate.
+
+Write these down first. They tell you which nodes, tools, and edges you'll need — and they become your test checklist at the end (15.8).
+
+<Callout type="tip" title="Scope it down">
+A capstone is for *consolidating*, not for building everything. Pick the smallest version that exercises each concept once. You can always extend it later.
+</Callout>
+
+## 15.2 Designing the graph
+
+With requirements in hand, sketch the graph *before* coding. Ask the pattern questions from Chapter 14: is this a chain, a router, an agent? The support assistant is mostly a **router** (classify → dispatch) with an **agent loop** inside the answer branch (for the order-lookup tool):
+
+- A `classify` node labels each message: *question*, *order*, or *complaint*.
+- A conditional edge routes to `answer` (questions and orders) or `escalate` (complaints).
+- The `answer` node is tool-bound and loops with a `tools` node until it can reply.
+- `escalate` hands off to a human and ends.
+
+Sketching first means you write nodes to fit a plan, instead of discovering the shape halfway through.
+
+## 15.3 Defining the state
+
+The state is the contract every node shares. Keep it minimal — just the channels the graph actually needs:
+
+```python
+from typing import Annotated
+from typing_extensions import TypedDict
+from langgraph.graph.message import add_messages
+
+
+class State(TypedDict):
+    messages: Annotated[list, add_messages]
+    category: str
+```
+
+`messages` uses the `add_messages` reducer so conversation turns accumulate (Chapter 9), and `category` carries the classifier's decision from `classify` to the router. Resist adding channels you *might* need — add them when a node actually requires one.
+
+## 15.4 Implementing nodes and routes
+
+Now write the nodes. Each is a plain function that takes state and returns an update (Chapter 7), and the router is an ordinary function returning a key (Chapter 8):
+
+```python
+def classify(state: State) -> dict:
+    label = classifier.invoke(state["messages"][-1].content)  # "question" | "order" | "complaint"
+    return {"category": label}
+
+
+def answer(state: State) -> dict:
+    return {"messages": [llm.invoke(state["messages"])]}
+
+
+def escalate(state: State) -> dict:
+    return {"messages": [AIMessage("I've flagged this for a human agent who will follow up.")]}
+
+
+def route(state: State) -> str:
+    return "escalate" if state["category"] == "complaint" else "answer"
+```
+
+Wire them together, and you already have a runnable graph:
+
+```python
+builder = StateGraph(State)
+builder.add_node("classify", classify)
+builder.add_node("answer", answer)
+builder.add_node("escalate", escalate)
+
+builder.add_edge(START, "classify")
+builder.add_conditional_edges("classify", route, {"answer": "answer", "escalate": "escalate"})
+builder.add_edge("answer", END)
+builder.add_edge("escalate", END)
+```
+
+Compile it and test the routing *now*, before adding anything else. A question should reach `answer`; a complaint should reach `escalate`.
+
+## 15.5 Adding tools
+
+Next, give the `answer` node a tool so it can look up real order data instead of guessing (Chapter 10). Define the tool, bind it to the model, and add a `ToolNode` with the agent loop:
+
+```python
+from langchain_core.tools import tool
+from langgraph.prebuilt import ToolNode, tools_condition
+
+
+@tool
+def lookup_order(order_id: str) -> str:
+    """Look up the status of an order by its ID."""
+    return orders_db.get(order_id, "No order found with that ID.")
+
+
+llm = base_llm.bind_tools([lookup_order])
+builder.add_node("tools", ToolNode([lookup_order]))
+
+# answer now loops through tools until it has what it needs
+builder.add_conditional_edges("answer", tools_condition)
+builder.add_edge("tools", "answer")
+```
+
+`tools_condition` sends the flow to `tools` when the model requested a call, and to `END` when it's ready to reply — the ReAct loop from Chapter 10, dropped straight into the answer branch.
+
+## 15.6 Adding memory
+
+Right now each request starts fresh. Attach a **checkpointer** (Chapter 11) so the assistant remembers the conversation, and pass a `thread_id` to keep each customer separate:
+
+```python
+from langgraph.checkpoint.memory import MemorySaver
+
+graph = builder.compile(checkpointer=MemorySaver())
+
+config = {"configurable": {"thread_id": customer_id}}
+graph.invoke({"messages": [("user", "Where's my order?")]}, config)
+graph.invoke({"messages": [("user", "It was #A123")]}, config)  # remembers the first turn
+```
+
+With the same `thread_id`, the second message sees the first — so "it was #A123" makes sense in context. Use a real `SqliteSaver` or `PostgresSaver` when you want memory to survive restarts.
+
+## 15.7 Adding streaming
+
+Finally, stream the reply so the customer watches it appear instead of waiting for a spinner (Chapter 12). Swap `invoke` for `stream` with `stream_mode="messages"`:
+
+```python
+for token, meta in graph.stream(
+    {"messages": [("user", user_input)]},
+    config,
+    stream_mode="messages",
+):
+    if meta["langgraph_node"] == "answer" and token.content:
+        print(token.content, end="", flush=True)
+```
+
+Filtering on `langgraph_node == "answer"` shows only the customer-facing reply, not any internal chatter. That's the last requirement met — the assistant now classifies, routes, uses tools, remembers, and streams.
+
+## 15.8 Testing the workflow
+
+Turn your requirements (15.1) into concrete checks. Test each path independently, then together:
+
+- **Routing** — a question reaches `answer`; a complaint reaches `escalate`. Print `state["category"]` to confirm.
+- **Tools** — ask "Where's order #A123?" and verify `lookup_order` is called with the right ID (read the trace, Chapter 13).
+- **Memory** — send a follow-up on the same `thread_id` and confirm the assistant uses earlier context; a *different* `thread_id` should start clean.
+- **Streaming** — confirm tokens arrive incrementally, not all at once.
+- **Edge cases** — an unknown order ID, an empty message, a complaint mid-conversation.
+
+```python
+def test_complaint_escalates():
+    out = graph.invoke({"messages": [("user", "This is terrible, I want a refund!")]}, cfg())
+    assert "human agent" in out["messages"][-1].content
+```
+
+When something misbehaves, reach for the debugging tools from Chapter 13 — inspect state, read the trace, lower the recursion limit.
+
+## 15.9 Documenting the project
+
+A project isn't done until someone else can run it. Write a short `README` that covers:
+
+- **What it does** — one paragraph, plus the requirements from 15.1.
+- **Setup** — the virtual environment and `pip install` steps (Chapter 3), and which environment variables to set (`OPENAI_API_KEY`, optionally `LANGSMITH_TRACING`).
+- **How to run** — the exact command, with an example conversation.
+- **The graph** — paste the Mermaid diagram from `graph.get_graph().draw_mermaid()` so readers see the shape at a glance.
+
+```python
+print(graph.get_graph().draw_mermaid())  # drop the output into your README
+```
+
+Good docs are also good revision: explaining the graph forces you to understand it.
+
+## 15.10 Suggested project: Customer-support assistant
+
+Putting it all together, here's the full brief to build on your own:
+
+> **Customer-support assistant.** Classify each incoming message as a *question*, an *order enquiry*, or a *complaint*. Answer questions directly, use an `lookup_order` tool for order enquiries, and escalate complaints to a human. Persist each customer's conversation by `thread_id`, and stream replies token by token.
+
+You have everything you need for this. Work through the same steps you just stepped through in the diagram — requirements, design, state, nodes, tools, memory, streaming, tests, docs — and you'll finish Part I with a real, working agent you built yourself.
+
+<Callout type="tip" title="Make it yours">
+Prefer a different domain? Swap the support assistant for a research helper, a coding assistant, or a personal task manager. The skeleton — classify, route, tools, memory, streaming — stays the same; only the nodes and tools change.
+</Callout>
+
+<Callout type="success" title="You've finished Part I 🎉">
+You can design a graph, define its state, write nodes and routes, add tools and memory, stream output, debug it, and ship it with docs — the full lifecycle of a beginner LangGraph agent. That's a genuine foundation. Part II builds on it with human-in-the-loop control, subgraphs, structured state, and production-grade patterns.
+</Callout>

@@ -5,6 +5,7 @@ import { cn } from "@/lib/utils";
 import {
   AgentLoop,
   AutonomySpectrum,
+  CapstoneBuilder,
   ConditionalRouter,
   ContextWindow,
   DeterminismDemo,
@@ -134,6 +135,7 @@ export const mdxComponents: MDXComponents = {
   Callout,
   AgentLoop,
   AutonomySpectrum,
+  CapstoneBuilder,
   ConditionalRouter,
   ContextWindow,
   DeterminismDemo,

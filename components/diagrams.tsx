@@ -3433,3 +3433,251 @@ export function StreamModes() {
     </figure>
   );
 }
+
+/* ------------------------------------------------------------------ */
+/* 31. CapstoneBuilder — assemble the support assistant step by step   */
+/* ------------------------------------------------------------------ */
+
+const CAPSTONE_STEPS = [
+  {
+    key: "state",
+    label: "State",
+    icon: Database,
+    adds: "Define what the graph carries between nodes — the conversation and the detected category.",
+    code: [
+      "class State(TypedDict):",
+      "    messages: Annotated[list, add_messages]",
+      "    category: str",
+    ],
+  },
+  {
+    key: "nodes",
+    label: "Nodes & routes",
+    icon: Workflow,
+    adds: "Classify each message, then branch: answer questions, or escalate complaints to a human.",
+    code: [
+      'builder.add_edge(START, "classify")',
+      'builder.add_conditional_edges("classify", route, {',
+      '    "question": "answer",',
+      '    "complaint": "escalate",',
+      "})",
+    ],
+  },
+  {
+    key: "tools",
+    label: "Tools",
+    icon: Wrench,
+    adds: "Give the assistant an order-lookup tool so it can answer with real data, not guesses.",
+    code: [
+      "llm = llm.bind_tools([lookup_order])",
+      'builder.add_node("tools", ToolNode([lookup_order]))',
+      'builder.add_conditional_edges("answer", tools_condition)',
+      'builder.add_edge("tools", "answer")',
+    ],
+  },
+  {
+    key: "memory",
+    label: "Memory",
+    icon: Brain,
+    adds: "Attach a checkpointer so each customer's conversation persists across turns, keyed by thread.",
+    code: [
+      "graph = builder.compile(checkpointer=MemorySaver())",
+      'config = {"configurable": {"thread_id": customer_id}}',
+    ],
+  },
+  {
+    key: "streaming",
+    label: "Streaming",
+    icon: Radio,
+    adds: "Stream the reply token by token so the customer sees it typing instead of waiting.",
+    code: [
+      'for tok, meta in graph.stream(',
+      '    inputs, config, stream_mode="messages"):',
+      "    print(tok.content, end='', flush=True)",
+    ],
+  },
+] as const;
+
+function CapstoneNode({
+  label,
+  active,
+  terminal,
+  tone = "brand",
+}: {
+  label: string;
+  active: boolean;
+  terminal?: boolean;
+  tone?: "brand" | "amber";
+}) {
+  return (
+    <span
+      className={cn(
+        "border px-3 py-1.5 font-mono text-xs font-semibold transition-all",
+        terminal ? "rounded-full" : "rounded-lg",
+        !active
+          ? "border-dashed border-ink-300/60 bg-transparent text-ink-300 dark:border-ink-700 dark:text-ink-600"
+          : tone === "amber"
+            ? "border-amber-500/50 bg-amber-500/10 text-amber-700 dark:text-amber-300"
+            : terminal
+              ? "border-brand-500/60 bg-white text-brand-600 dark:bg-ink-900 dark:text-brand-300"
+              : "border-brand-400/60 bg-brand-500/10 text-ink-800 dark:text-ink-100"
+      )}
+    >
+      {label}
+    </span>
+  );
+}
+
+export function CapstoneBuilder() {
+  const [step, setStep] = useState(0);
+  const s = CAPSTONE_STEPS[step];
+  const Icon = s.icon;
+
+  // What has been assembled by the current step.
+  const hasNodes = step >= 1;
+  const hasTools = step >= 2;
+  const hasMemory = step >= 3;
+  const hasStreaming = step >= 4;
+
+  return (
+    <figure className="not-prose my-8 rounded-2xl border border-ink-200/70 bg-[rgb(var(--bg-subtle))] p-5 dark:border-ink-800/70 sm:p-6">
+      <div className="mb-4 flex items-center justify-between gap-3">
+        <span className="inline-flex items-center gap-2 text-sm font-semibold text-ink-900 dark:text-white">
+          <Blocks className="h-4 w-4 text-brand-500" />
+          Building the support assistant
+        </span>
+        <span className="font-mono text-xs text-ink-400">
+          step {step + 1} of {CAPSTONE_STEPS.length}
+        </span>
+      </div>
+
+      {/* stage rail */}
+      <div className="mb-5 flex flex-wrap gap-2">
+        {CAPSTONE_STEPS.map((x, i) => {
+          const StepIcon = x.icon;
+          const done = i < step;
+          const current = i === step;
+          return (
+            <button
+              key={x.key}
+              type="button"
+              onClick={() => setStep(i)}
+              className={cn(
+                "inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition-all",
+                current
+                  ? "border-brand-400/70 bg-brand-500/10 text-brand-700 dark:text-brand-200"
+                  : done
+                    ? "border-brand-400/40 bg-transparent text-brand-600 dark:text-brand-300"
+                    : "border-ink-200/70 bg-white/60 text-ink-400 hover:border-brand-400/40 dark:border-ink-800/70 dark:bg-ink-900/40"
+              )}
+            >
+              {done ? (
+                <Check className="h-3.5 w-3.5" />
+              ) : (
+                <StepIcon className="h-3.5 w-3.5" />
+              )}
+              {x.label}
+            </button>
+          );
+        })}
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-2">
+        {/* the graph, growing */}
+        <div className="rounded-xl border border-ink-200/70 bg-white/50 p-5 dark:border-ink-800/70 dark:bg-ink-900/40">
+          <div className="flex flex-col items-center gap-2">
+            <CapstoneNode label="START" active terminal />
+            <Down />
+            <CapstoneNode label="classify" active />
+            <Down />
+            <div className="flex flex-wrap items-start justify-center gap-2">
+              <div className="flex flex-col items-center gap-2">
+                <CapstoneNode label="answer" active={hasNodes} />
+                {hasTools && (
+                  <>
+                    <span className="inline-flex items-center gap-1 text-ink-400">
+                      <RefreshCw className="h-3.5 w-3.5" />
+                    </span>
+                    <CapstoneNode label="tools" active />
+                  </>
+                )}
+              </div>
+              <CapstoneNode label="escalate" active={hasNodes} tone="amber" />
+            </div>
+            <Down />
+            <CapstoneNode label="END" active terminal />
+          </div>
+
+          {/* capability badges */}
+          <div className="mt-4 flex flex-wrap justify-center gap-2 border-t border-ink-200/60 pt-4 dark:border-ink-800/60">
+            <span
+              className={cn(
+                "inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] font-medium transition-all",
+                hasMemory
+                  ? "border-brand-400/50 bg-brand-500/10 text-brand-700 dark:text-brand-300"
+                  : "border-dashed border-ink-300/60 text-ink-300 dark:border-ink-700 dark:text-ink-600"
+              )}
+            >
+              <Brain className="h-3 w-3" /> memory
+            </span>
+            <span
+              className={cn(
+                "inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] font-medium transition-all",
+                hasStreaming
+                  ? "border-brand-400/50 bg-brand-500/10 text-brand-700 dark:text-brand-300"
+                  : "border-dashed border-ink-300/60 text-ink-300 dark:border-ink-700 dark:text-ink-600"
+              )}
+            >
+              <Radio className="h-3 w-3" /> streaming
+            </span>
+          </div>
+        </div>
+
+        {/* what this step adds */}
+        <div key={s.key} className="animate-fade-up flex flex-col">
+          <span className="mb-2 inline-flex items-center gap-2 text-sm font-semibold text-brand-700 dark:text-brand-200">
+            <Icon className="h-4 w-4" />
+            {s.label}
+          </span>
+          <p className="mb-3 text-sm leading-relaxed text-ink-600 dark:text-ink-300">
+            {s.adds}
+          </p>
+          <MiniCode lines={[...s.code]} />
+        </div>
+      </div>
+
+      <div className="mt-5 flex items-center gap-2">
+        <button
+          type="button"
+          onClick={() => setStep((v) => Math.max(0, v - 1))}
+          disabled={step === 0}
+          className="inline-flex items-center gap-1 rounded-lg border border-ink-200/70 px-3 py-1.5 text-sm font-medium text-ink-600 transition-colors hover:border-brand-400/50 disabled:opacity-40 dark:border-ink-800/70 dark:text-ink-300"
+        >
+          <ChevronLeft className="h-4 w-4" /> Back
+        </button>
+        <button
+          type="button"
+          onClick={() =>
+            setStep((v) => Math.min(CAPSTONE_STEPS.length - 1, v + 1))
+          }
+          disabled={step === CAPSTONE_STEPS.length - 1}
+          className="inline-flex items-center gap-1 rounded-lg bg-brand-600 px-3.5 py-1.5 text-sm font-semibold text-white transition-colors hover:bg-brand-500 disabled:opacity-40"
+        >
+          Next <ChevronRight className="h-4 w-4" />
+        </button>
+        {step === CAPSTONE_STEPS.length - 1 && (
+          <span className="inline-flex items-center gap-1 text-sm font-medium text-brand-600 dark:text-brand-300">
+            <Check className="h-4 w-4" /> assistant complete
+          </span>
+        )}
+        <button
+          type="button"
+          onClick={() => setStep(0)}
+          className="ml-auto inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-medium text-ink-400 transition-colors hover:text-brand-600"
+        >
+          <RotateCcw className="h-3.5 w-3.5" /> Reset
+        </button>
+      </div>
+    </figure>
+  );
+}
