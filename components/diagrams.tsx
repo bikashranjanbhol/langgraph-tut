@@ -3160,6 +3160,206 @@ export function RedactionToggle() {
 }
 
 /* ------------------------------------------------------------------ */
+/* 30. PatternGallery — the beginner design patterns at a glance       */
+/* ------------------------------------------------------------------ */
+
+const PATTERNS = [
+  {
+    key: "chain",
+    label: "Prompt chain",
+    desc: "A fixed sequence of steps, each feeding the next.",
+    use: "The task breaks into predictable, ordered steps.",
+    shape: "chain",
+  },
+  {
+    key: "router",
+    label: "Router",
+    desc: "Classify the input, then dispatch to a specialised handler.",
+    use: "Different kinds of input need different handling.",
+    shape: "router",
+  },
+  {
+    key: "evaluator",
+    label: "Evaluator–optimizer",
+    desc: "Generate, grade, and refine until the result is good enough.",
+    use: "Quality matters and something can judge it.",
+    shape: "loop",
+  },
+  {
+    key: "agent",
+    label: "Simple agent loop",
+    desc: "A model calls tools in a loop until the task is done.",
+    use: "The right steps depend on what the model discovers.",
+    shape: "agent",
+  },
+  {
+    key: "approval",
+    label: "Human approval",
+    desc: "Pause for a human to approve before a consequential action.",
+    use: "An action is risky, costly, or irreversible.",
+    shape: "approval",
+  },
+  {
+    key: "retrieval",
+    label: "Retrieval-assisted",
+    desc: "Fetch relevant context, then answer grounded in it.",
+    use: "Answers must come from your data, not the model's memory.",
+    shape: "retrieval",
+  },
+] as const;
+
+function Ar() {
+  return <ArrowRight className="h-3.5 w-3.5 shrink-0 text-ink-400" />;
+}
+
+function AmberChip({ label }: { label: string }) {
+  return (
+    <span className="rounded-lg border border-amber-500/50 bg-amber-500/10 px-3 py-1.5 font-mono text-xs font-semibold text-amber-700 dark:text-amber-300">
+      {label}
+    </span>
+  );
+}
+
+function PatternShape({ shape }: { shape: string }) {
+  switch (shape) {
+    case "chain":
+      return (
+        <div className="flex flex-wrap items-center gap-1.5">
+          <Chip label="START" terminal />
+          <Ar />
+          <Chip label="extract" />
+          <Ar />
+          <Chip label="translate" />
+          <Ar />
+          <Chip label="summarize" />
+          <Ar />
+          <Chip label="END" terminal />
+        </div>
+      );
+    case "router":
+      return (
+        <div className="flex flex-col items-center gap-2">
+          <Chip label="classify" />
+          <Down />
+          <div className="flex flex-wrap justify-center gap-2">
+            <Chip label="answer" />
+            <Chip label="escalate" />
+            <Chip label="discard" />
+          </div>
+        </div>
+      );
+    case "loop":
+      return (
+        <div className="flex flex-col items-center gap-2">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <Chip label="generate" />
+            <RefreshCw className="h-3.5 w-3.5 text-ink-400" />
+            <Chip label="evaluate" />
+            <Ar />
+            <Chip label="END" terminal />
+          </div>
+          <span className="text-[11px] text-ink-400">loops until good enough</span>
+        </div>
+      );
+    case "agent":
+      return (
+        <div className="flex flex-col items-center gap-2">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <Chip label="agent" />
+            <RefreshCw className="h-3.5 w-3.5 text-ink-400" />
+            <Chip label="tools" />
+            <Ar />
+            <Chip label="END" terminal />
+          </div>
+          <span className="text-[11px] text-ink-400">
+            loops until no more tool calls
+          </span>
+        </div>
+      );
+    case "approval":
+      return (
+        <div className="flex flex-wrap items-center gap-1.5">
+          <Chip label="propose" />
+          <Ar />
+          <AmberChip label="human ✋" />
+          <Ar />
+          <Chip label="act" />
+          <Ar />
+          <Chip label="END" terminal />
+        </div>
+      );
+    case "retrieval":
+      return (
+        <div className="flex flex-wrap items-center gap-1.5">
+          <Chip label="START" terminal />
+          <Ar />
+          <Chip label="retrieve" />
+          <Ar />
+          <Chip label="generate" />
+          <Ar />
+          <Chip label="END" terminal />
+        </div>
+      );
+    default:
+      return null;
+  }
+}
+
+export function PatternGallery() {
+  const [key, setKey] = useState<string>("chain");
+  const p = PATTERNS.find((x) => x.key === key) ?? PATTERNS[0];
+
+  return (
+    <figure className="not-prose my-8 rounded-2xl border border-ink-200/70 bg-[rgb(var(--bg-subtle))] p-5 dark:border-ink-800/70 sm:p-6">
+      <span className="mb-4 inline-flex items-center gap-2 text-sm font-semibold text-ink-900 dark:text-white">
+        <Blocks className="h-4 w-4 text-brand-500" />
+        Six beginner patterns
+      </span>
+
+      <div className="mb-4 flex flex-wrap gap-2">
+        {PATTERNS.map((x) => (
+          <button
+            key={x.key}
+            type="button"
+            onClick={() => setKey(x.key)}
+            className={cn(
+              "rounded-lg border px-3 py-1.5 text-sm font-medium transition-all",
+              key === x.key
+                ? "border-brand-400/70 bg-brand-500/10 text-brand-700 dark:text-brand-200"
+                : "border-ink-200/70 bg-white/60 text-ink-500 hover:border-brand-400/40 dark:border-ink-800/70 dark:bg-ink-900/40 dark:text-ink-400"
+            )}
+          >
+            {x.label}
+          </button>
+        ))}
+      </div>
+
+      <div
+        key={key}
+        className="animate-fade-up rounded-xl border border-ink-200/70 bg-white/50 p-5 dark:border-ink-800/70 dark:bg-ink-900/40"
+      >
+        <div className="flex min-h-[5rem] items-center justify-center overflow-x-auto">
+          <PatternShape shape={p.shape} />
+        </div>
+      </div>
+
+      <p className="mt-4 text-sm leading-relaxed text-ink-700 dark:text-ink-200">
+        <span className="font-semibold text-ink-900 dark:text-white">
+          {p.label}.
+        </span>{" "}
+        {p.desc}
+      </p>
+      <p className="mt-2 text-sm text-ink-500 dark:text-ink-400">
+        <span className="font-medium text-brand-600 dark:text-brand-300">
+          Use when:
+        </span>{" "}
+        {p.use}
+      </p>
+    </figure>
+  );
+}
+
+/* ------------------------------------------------------------------ */
 /* 27. StreamModes — what each stream_mode yields                      */
 /* ------------------------------------------------------------------ */
 

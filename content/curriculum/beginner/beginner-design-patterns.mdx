@@ -1,0 +1,117 @@
+---
+updated: "2026-07-26"
+---
+
+You now have all the building blocks — state, nodes, edges, tools, memory. This chapter steps back and names the recurring *shapes* those blocks form. Learning to recognise these **design patterns** means you'll reach for the right structure instantly instead of reinventing it. Here are the six you'll use most as a beginner:
+
+<PatternGallery />
+
+Let's walk through each, then finish with how to choose.
+
+## 14.1 Prompt chain
+
+The simplest pattern: a **fixed sequence** of steps, each feeding the next. You decompose a task into ordered stages and wire them with sequential edges.
+
+```python
+builder.add_edge(START, "extract")
+builder.add_edge("extract", "translate")
+builder.add_edge("translate", "summarize")
+builder.add_edge("summarize", END)
+```
+
+Use it when the steps are known in advance and never change — like *extract fields → translate → summarize*. It's predictable, cheap, and easy to test. When a single prompt would be doing too much at once, split it into a chain.
+
+## 14.2 Router workflow
+
+A **router** classifies the input, then dispatches it to a specialised handler via a conditional edge. You built this in Chapter 8 with the content classifier.
+
+```python
+builder.add_conditional_edges("classify", route, {
+    "question": "answer",
+    "complaint": "escalate",
+    "spam": "discard",
+})
+```
+
+Use it when different kinds of input need different handling. Routing keeps each handler focused and simple, instead of one giant prompt trying to cover every case. Classification is often done with the model's structured output.
+
+## 14.3 Evaluator–optimizer workflow
+
+Here two roles work together in a **loop**: a *generator* produces a draft, an *evaluator* grades it, and the graph either accepts the result or sends it back to be improved.
+
+```python
+builder.add_edge("generate", "evaluate")
+builder.add_conditional_edges("evaluate", should_continue, {
+    "retry": "generate",   # not good enough → refine
+    "done": END,
+})
+```
+
+Use it when quality matters and something can *judge* that quality — a rubric, a test suite, or an LLM-as-judge. It trades extra cost for a better result, so pair it with a max-attempts guard (Chapter 8) so it always terminates.
+
+## 14.4 Simple agent loop
+
+The **agent loop** (ReAct) is the pattern from Chapter 10: a tool-bound model loops with a tools node until it has what it needs to answer.
+
+```python
+builder.add_conditional_edges("agent", tools_condition)  # → "tools" or END
+builder.add_edge("tools", "agent")
+```
+
+Use it when the *right steps aren't known in advance* — they depend on what the model discovers along the way. This is the most flexible pattern and the most autonomous, which also makes it the least predictable. Reach for it when a fixed chain or router genuinely can't express the task.
+
+## 14.5 Human approval workflow
+
+Sometimes an agent shouldn't act alone. The **human approval** pattern pauses before a consequential action and waits for a person to approve, edit, or reject it.
+
+```python
+def act(state: State) -> dict:
+    decision = interrupt({"action": state["proposed_action"]})   # pause for a human
+    if decision == "approve":
+        return {"result": perform(state["proposed_action"])}
+    return {"result": "cancelled"}
+```
+
+Use it when an action is risky, costly, or irreversible — sending an email, issuing a refund, deploying code. It relies on the `interrupt` mechanism, which we cover fully in the intermediate part; the shape is: *propose → pause for human → act or stop.*
+
+## 14.6 Retrieval-assisted response workflow
+
+The **retrieval-assisted** pattern (the heart of RAG) fetches relevant context first, then answers *grounded in that context* rather than the model's memory.
+
+```python
+def retrieve(state: State) -> dict:
+    return {"context": search(state["question"])}
+
+
+def generate(state: State) -> dict:
+    prompt = f"Answer using this context:\n{state['context']}\n\nQ: {state['question']}"
+    return {"answer": llm.invoke(prompt).content}
+```
+
+Use it when answers must be based on *your* data — documentation, a knowledge base, private records — and when you need to reduce hallucination and cite sources. The full RAG pattern (query rewriting, grading, corrective retrieval) is a whole chapter in the intermediate part; this is its essential shape.
+
+## 14.7 When to use each pattern
+
+The patterns form a rough ladder from simplest and most predictable to most flexible and autonomous:
+
+| Pattern | Reach for it when… |
+| --- | --- |
+| Prompt chain | The steps are fixed and known in advance |
+| Router | Different inputs need different handling |
+| Evaluator–optimizer | Quality matters and can be judged |
+| Retrieval-assisted | Answers must come from your data |
+| Simple agent loop | The steps depend on what the model discovers |
+| Human approval | An action is risky or irreversible |
+
+Two principles tie them together:
+
+- **Prefer the simplest pattern that works.** A chain you can read top to bottom is easier to build, test, and trust than an autonomous agent. Only climb the ladder when the task genuinely needs the flexibility.
+- **Compose them.** Real applications are rarely one pattern. A support assistant might *route* incoming messages, use *retrieval* to answer questions, run an *agent loop* for complex requests, and require *human approval* before issuing a refund — all in one graph.
+
+<Callout type="tip" title="Patterns are a vocabulary">
+Naming these shapes changes how you design. Instead of staring at a blank file, you'll ask "is this a chain, a router, or an agent?" — and the graph structure follows from the answer.
+</Callout>
+
+<Callout type="success" title="You can design graphs now, not just build them">
+Six patterns, and the judgement to pick and combine them. That's the difference between following a tutorial and architecting your own agent. Next you'll put everything from Part I together in the <strong>beginner capstone project</strong>.
+</Callout>
