@@ -39,6 +39,11 @@ import {
   WhenToUse,
   WorkflowVsAgent,
 } from "@/components/diagrams";
+import {
+  ReducerPlayground,
+  StateBoundaryExplorer,
+  StateShapeAudit,
+} from "@/components/state-diagrams";
 
 type CalloutType = "note" | "tip" | "warning" | "success";
 
@@ -160,8 +165,11 @@ export const mdxComponents: MDXComponents = {
   ProjectTree,
   ProviderPicker,
   RedactionToggle,
+  ReducerPlayground,
   StackDiagram,
+  StateBoundaryExplorer,
   StateMerge,
+  StateShapeAudit,
   StateScopes,
   StreamModes,
   ThreadSwitcher,

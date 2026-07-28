@@ -1,0 +1,520 @@
+---
+updated: "2026-07-28"
+---
+
+Small LangGraph applications can get away with a state schema that grows one key at a time. Larger applications cannot. Once several nodes, parallel branches, persisted threads, and multiple developers share a graph, state becomes an **application contract**: every channel needs a purpose, a type, an owner, and an update rule.
+
+This chapter turns state from a convenient dictionary into a deliberate design. You will separate the graph's interface from its working memory, define reducers that remain safe under concurrency, normalise shared data, evolve persisted schemas without breaking active threads, and keep checkpoints lean.
+
+## 2.1 Designing state for larger applications
+
+Start with the graph's decisions, not with every value your Python code happens to touch. State should contain information that at least one later node, checkpoint, interrupt, stream consumer, or caller needs. Local variables that exist only inside one node should stay local.
+
+A useful design pass asks four questions for every channel:
+
+1. **Why does this value cross a node boundary?**
+2. **Who is allowed to write it?**
+3. **How do multiple updates combine?**
+4. **Does it need to survive in a checkpoint?**
+
+Here is a focused state for a research workflow:
+
+```python
+from operator import add
+from typing import Annotated, Literal, NotRequired
+from typing_extensions import TypedDict
+
+
+class DocumentRef(TypedDict):
+    id: str
+    score: float
+
+
+class ResearchState(TypedDict):
+    # Supplied by the caller
+    question: str
+
+    # Produced while the graph runs
+    search_query: NotRequired[str]
+    documents: Annotated[list[DocumentRef], add]
+    answer: NotRequired[str]
+    status: NotRequired[
+        Literal["searching", "drafting", "complete", "failed"]
+    ]
+```
+
+The schema describes more than shape:
+
+- `question` is an input owned by the caller.
+- `search_query`, `answer`, and `status` have one logical writer and therefore use overwrite semantics.
+- `documents` may receive updates from several retrieval branches, so it declares an append reducer.
+- Optional internal fields are `NotRequired`, allowing the graph to start before those values exist.
+
+<Callout type="tip" title="Design channels around ownership">
+If you cannot say which node owns a channel, the state boundary is probably too vague. Prefer one writer and many readers. Introduce a reducer only when multiple writers are a real requirement—not as a substitute for deciding ownership.
+</Callout>
+
+## 2.2 Public and private state
+
+As a graph grows, not every node should receive every channel. A query-rewriting node needs the user's question, but it does not need authentication metadata, raw retrieval diagnostics, or the final response. Narrow node schemas make those boundaries visible.
+
+LangGraph can add channels declared by node input and output schemas, even when those channels are not part of the graph's public input or output:
+
+```python
+from typing_extensions import TypedDict
+from langgraph.graph import StateGraph, START, END
+
+
+class InputState(TypedDict):
+    question: str
+
+
+class OutputState(TypedDict):
+    answer: str
+
+
+class OverallState(TypedDict, total=False):
+    question: str
+    document_ids: list[str]
+    answer: str
+
+
+class PrivateState(TypedDict):
+    normalised_query: str
+
+
+def normalise_question(state: InputState) -> PrivateState:
+    return {"normalised_query": state["question"].strip().lower()}
+
+
+def retrieve(state: PrivateState) -> OverallState:
+    ids = search_index(state["normalised_query"])
+    return {"document_ids": ids}
+
+
+def generate(state: OverallState) -> OutputState:
+    return {"answer": answer_from_documents(state["document_ids"])}
+
+
+builder = StateGraph(
+    OverallState,
+    input_schema=InputState,
+    output_schema=OutputState,
+)
+builder.add_node("normalise_question", normalise_question)
+builder.add_node("retrieve", retrieve)
+builder.add_node("generate", generate)
+builder.add_edge(START, "normalise_question")
+builder.add_edge("normalise_question", "retrieve")
+builder.add_edge("retrieve", "generate")
+builder.add_edge("generate", END)
+
+graph = builder.compile()
+```
+
+`PrivateState` is a node-to-node contract: `retrieve` can read `normalised_query`, while a node typed with `OverallState` cannot depend on it without declaring that dependency.
+
+<Callout type="warning" title="Private does not mean secret">
+Private state is an interface boundary, not an access-control or redaction feature. Internal channels may still be persisted, traced, or included when streaming full state values. Never put passwords, API keys, bearer tokens, or data a stream consumer must not see into graph state.
+</Callout>
+
+## 2.3 Separate input and output schemas
+
+The graph's complete state is an implementation detail. Its input and output are a public API. Keeping those schemas separate gives callers a small, stable contract while nodes remain free to add internal working channels.
+
+With the graph above:
+
+```python
+result = graph.invoke({"question": "What is durable execution?"})
+print(result)
+# {"answer": "..."}
+```
+
+The caller supplies only `InputState`, and `invoke` returns only fields from `OutputState`. `normalised_query` and `document_ids` do not leak into the result.
+
+<StateBoundaryExplorer />
+
+Separate schemas provide three practical benefits:
+
+- **Safer changes** — internal channels can be renamed or reorganised without changing every caller.
+- **Clearer validation** — the request and response shapes are easy to document and test.
+- **Smaller outputs** — callers receive the result they need, not the graph's entire scratchpad.
+
+Input and output filtering does not erase internal channels from the running state. It controls what enters through the graph boundary and what `invoke` returns.
+
+## 2.4 Typed state channels
+
+Every field in a state schema becomes a **channel**. The type describes values accepted by that channel; an optional reducer describes how updates are applied.
+
+Use the narrowest useful types:
+
+```python
+from typing import Literal, NotRequired
+from typing_extensions import TypedDict
+
+
+class Citation(TypedDict):
+    document_id: str
+    quote: str
+
+
+class State(TypedDict):
+    question: str
+    route: Literal["retrieve", "answer", "escalate"]
+    citations: list[Citation]
+    error_code: NotRequired[str]
+```
+
+Prefer:
+
+- `Literal` for a closed set of routing or status values.
+- Nested `TypedDict` types for structured records.
+- `NotRequired` for channels that do not exist at graph start.
+- Domain-specific names such as `retrieved_document_ids`, not generic names such as `data`.
+
+`TypedDict` gives static checking and editor support, but it does not perform runtime validation by itself. Validate untrusted requests at the application boundary—often with Pydantic—then pass a known shape into the graph.
+
+<Callout type="note" title="Type and reducer answer different questions">
+The channel type answers “what values belong here?” The reducer answers “what happens when an update arrives?” A typed list still overwrites by default unless you attach a reducer.
+</Callout>
+
+## 2.5 Reducers
+
+A reducer is a function that receives the channel's current value and a new update, then returns the next value:
+
+```python
+next_value = reducer(current_value, update)
+```
+
+Attach it with `Annotated`:
+
+```python
+from operator import add
+from typing import Annotated
+from typing_extensions import TypedDict
+
+
+class State(TypedDict):
+    notes: Annotated[list[str], add]
+```
+
+If the current value is `["planned"]` and a node returns `{"notes": ["searched"]}`, `operator.add` produces `["planned", "searched"]`.
+
+Custom reducers let you encode domain rules. This one merges document records by ID, replacing an older record when a newer update has the same ID:
+
+```python
+from typing import Annotated
+from typing_extensions import TypedDict
+
+
+class Document(TypedDict):
+    id: str
+    text: str
+    score: float
+
+
+def merge_documents(
+    current: list[Document],
+    update: list[Document],
+) -> list[Document]:
+    by_id = {document["id"]: document for document in current}
+    for document in update:
+        by_id[document["id"]] = document
+    return list(by_id.values())
+
+
+class State(TypedDict):
+    documents: Annotated[list[Document], merge_documents]
+```
+
+A production reducer should be:
+
+- **Pure** — no network calls, logging side effects, randomness, or mutation of its arguments.
+- **Deterministic** — the same inputs always produce the same result.
+- **Associative** where updates may be grouped: `merge(merge(a, b), c)` should equal `merge(a, merge(b, c))`.
+- **Explicit about conflicts** — if two records share an ID, document which one wins.
+
+Reducers are part of the state contract. Test them as carefully as routing functions.
+
+## 2.6 Append, merge, and overwrite behaviour
+
+The same Python type can have very different update behaviour:
+
+| Behaviour | Declaration | Best for |
+| --- | --- | --- |
+| Overwrite | No reducer | Status, route, current draft, single-owner values |
+| Append | `Annotated[list[T], operator.add]` | Independent events or results that accumulate |
+| Merge | `Annotated[T, custom_reducer]` | Records combined by key or domain rule |
+| Message merge | `Annotated[list[AnyMessage], add_messages]` | Conversation history with edits and removals |
+
+<ReducerPlayground />
+
+With an append reducer, return only the **delta**:
+
+```python
+# ❌ Wrong: returns old items again, so the reducer duplicates them
+def collect(state: State) -> dict:
+    return {"notes": state["notes"] + ["new note"]}
+
+
+# ✅ Right: returns only this node's contribution
+def collect(state: State) -> dict:
+    return {"notes": ["new note"]}
+```
+
+Sometimes an accumulating channel genuinely needs a reset. `Overwrite` bypasses its reducer for one update:
+
+```python
+from langgraph.types import Overwrite
+
+
+def reset_notes(state: State) -> dict:
+    return {"notes": Overwrite([])}
+```
+
+Only one node may overwrite the same channel in a super-step. Concurrent `Overwrite` updates are ambiguous and raise an update error.
+
+## 2.7 Message reducers
+
+Chat history needs more than list concatenation. Messages have IDs; a human reviewer may edit an existing message, and maintenance logic may remove old messages. `operator.add` cannot express those operations because it always appends.
+
+Use LangGraph's `add_messages` reducer:
+
+```python
+from typing import Annotated
+from typing_extensions import TypedDict
+from langchain.messages import AnyMessage
+from langgraph.graph.message import add_messages
+
+
+class State(TypedDict):
+    messages: Annotated[list[AnyMessage], add_messages]
+```
+
+`add_messages`:
+
+- appends messages with new IDs;
+- replaces an existing message when an update carries the same ID;
+- deserialises supported message dictionaries into LangChain message objects;
+- works with `RemoveMessage` for controlled deletion.
+
+LangGraph also provides `MessagesState` as a ready-made schema:
+
+```python
+from langgraph.graph import MessagesState
+
+
+class SupportState(MessagesState):
+    customer_id: str
+    case_id: str
+```
+
+To remove specific messages, return removal instructions through the same reducer:
+
+```python
+from langchain.messages import RemoveMessage
+
+
+def trim_old_messages(state: SupportState) -> dict:
+    old = state["messages"][:-8]
+    return {
+        "messages": [RemoveMessage(id=message.id) for message in old]
+    }
+```
+
+After trimming, preserve a valid provider conversation: tool-call messages generally need their matching tool results, and some providers require history to begin with a human message.
+
+<Callout type="tip" title="Conversation state is not long-term memory">
+Messages are thread-scoped execution state. Durable user facts, preferences, and knowledge that must be shared across threads belong in a store or application database—not in every conversation's message list.
+</Callout>
+
+## 2.8 Concurrent state updates
+
+Nodes connected from the same step can execute in parallel. They all read the state from the beginning of that super-step, then return updates that LangGraph applies before the next step.
+
+Parallel branches may safely write different channels:
+
+```python
+def retrieve_web(state: State) -> dict:
+    return {"web_results": search_web(state["question"])}
+
+
+def retrieve_internal(state: State) -> dict:
+    return {"internal_results": search_internal(state["question"])}
+```
+
+If both branches write the **same** channel, that channel needs a reducer:
+
+```python
+from operator import add
+from typing import Annotated
+from typing_extensions import TypedDict
+
+
+class State(TypedDict):
+    question: str
+    results: Annotated[list[str], add]
+
+
+def retrieve_web(state: State) -> dict:
+    return {"results": search_web(state["question"])}
+
+
+def retrieve_internal(state: State) -> dict:
+    return {"results": search_internal(state["question"])}
+```
+
+Without the reducer, LangGraph cannot choose which write should win and raises `INVALID_CONCURRENT_GRAPH_UPDATE`.
+
+Do not automatically solve every collision with `operator.add`. Choose among three designs:
+
+1. **One shared channel with a reducer** when updates are truly the same kind of data.
+2. **Separate channels** such as `web_results` and `internal_results` when provenance matters.
+3. **A join node** that reads branch-specific channels and produces one canonical result.
+
+For robust parallel reducers, avoid depending on arrival order. If order matters to the product, attach stable sequence or priority metadata and sort in a join node.
+
+## 2.9 State normalisation
+
+Normalised state gives every concept one canonical representation. Without it, one node stores a full document, another stores its URL, and a third stores a provider response containing the same document. The graph becomes larger and every consumer needs conversion logic.
+
+A normalised document model separates identity from ordering:
+
+```python
+from typing import Annotated
+from typing_extensions import TypedDict
+
+
+class Document(TypedDict):
+    id: str
+    source_uri: str
+    excerpt: str
+
+
+def merge_by_key(
+    current: dict[str, Document],
+    update: dict[str, Document],
+) -> dict[str, Document]:
+    return {**current, **update}
+
+
+class State(TypedDict):
+    documents_by_id: Annotated[
+        dict[str, Document],
+        merge_by_key,
+    ]
+    ranked_document_ids: list[str]
+```
+
+Retrieval branches can merge documents into `documents_by_id`. A later ranking node overwrites `ranked_document_ids` with the canonical order. Downstream nodes use IDs to look up records instead of copying the same document into several channels.
+
+Normalise at boundaries:
+
+- Convert provider-specific responses immediately after an API call.
+- Give records stable IDs before they enter an accumulating reducer.
+- Use one timestamp format and one timezone.
+- Store enums or `Literal` values instead of loosely related booleans.
+- Derive display-only values at render time rather than persisting them.
+
+<Callout type="warning" title="Beware accidental duplicate state">
+Channels such as <code>raw_documents</code>, <code>filtered_documents</code>, <code>ranked_documents</code>, and <code>prompt_documents</code> can create four copies of the same payload. Prefer one document map plus small ID lists that represent each stage.
+</Callout>
+
+## 2.10 State versioning
+
+With a checkpointer, old state outlives the deployment that created it. LangGraph applies the latest graph code when a thread resumes, so new nodes must still understand checkpoints written by previous versions.
+
+Start with additive changes:
+
+```python
+from typing import NotRequired
+from typing_extensions import TypedDict
+
+
+class State(TypedDict):
+    messages: list
+
+    # Added in schema v2; old checkpoints may not contain either field.
+    user_id: NotRequired[str]       # deprecated v1 name
+    customer_id: NotRequired[str]
+    schema_version: NotRequired[int]
+```
+
+When renaming a channel, use an add–migrate–remove sequence:
+
+```python
+def read_customer_id(state: State) -> str:
+    # During the transition, accept both shapes.
+    customer_id = state.get("customer_id") or state.get("user_id")
+    if not customer_id:
+        raise ValueError("customer identity is missing")
+    return customer_id
+
+
+def migrate_state(state: State) -> dict:
+    if state.get("schema_version", 1) < 2:
+        return {
+            "customer_id": state.get("user_id"),
+            "schema_version": 2,
+        }
+    return {}
+```
+
+A safe rollout looks like this:
+
+1. Add the new optional channel.
+2. Make readers tolerate old and new shapes.
+3. Dual-write or migrate active threads.
+4. Observe that old checkpoints have drained or been migrated.
+5. Remove the deprecated channel in a later release.
+
+An entry migration node helps new invocations, but it is not sufficient by itself: a thread paused at an interrupt may resume directly at a later node. Every node that can receive old persisted state must remain compatible until those threads are migrated or retired.
+
+The same caution applies to node names. A checkpoint can be paused before a named node; renaming or removing that node can make the thread impossible to resume. Treat persisted state and resumable node names like a versioned API.
+
+## 2.11 Avoiding oversized state objects
+
+State is not free storage. With persistence enabled, channels are serialised into checkpoints. They may also appear in traces, state history, debugging tools, and full-state streams. A single unnecessary multi-megabyte field can be written repeatedly across a long-running thread.
+
+<StateShapeAudit />
+
+Keep these **out** of state:
+
+- model clients, database connections, file handles, and other runtime objects;
+- secrets, access tokens, and credentials;
+- raw files, images, audio, large search responses, or full database rows;
+- data that can be recomputed cheaply from canonical fields;
+- long-term knowledge that belongs in a cross-thread store.
+
+Keep small references instead:
+
+```python
+class State(TypedDict, total=False):
+    schema_version: int
+    question: str
+    document_ids: list[str]       # points to the document store
+    artifact_uri: str             # points to object storage
+    answer: str
+    citation_ids: list[str]
+```
+
+Pass dependencies through runtime context or configuration, and fetch large records inside the node that needs them. For growing message histories, trim, remove, or summarise old messages while preserving the information required for the current task.
+
+A concise rule captures the whole chapter:
+
+> **Checkpoint what the graph needs to resume; reference everything else.**
+
+Before approving a state schema, review each channel:
+
+- Is it part of the input, output, internal state, or a narrow private contract?
+- Is its type precise and its ownership clear?
+- Does overwrite, append, merge, or `add_messages` match its update semantics?
+- Can parallel nodes update it safely?
+- Will an old checkpoint still work after the next deployment?
+- Is the value small, serialisable, and safe to persist and stream?
+
+For the underlying APIs, continue with the official [Graph API overview](https://docs.langchain.com/oss/python/langgraph/graph-api), [Graph API guide](https://docs.langchain.com/oss/python/langgraph/use-graph-api), and [backward-compatibility guide](https://docs.langchain.com/oss/python/langgraph/backward-compatibility).
+
+<Callout type="success" title="State is now a designed contract">
+You can separate public interfaces from working state, choose update semantics channel by channel, merge parallel writes safely, evolve persisted schemas, and keep checkpoints lean. Next, you will use that foundation to build <strong>complex routing</strong> with structured decisions, confidence, policy, <code>Command</code>, and dynamic fan-out.
+</Callout>
