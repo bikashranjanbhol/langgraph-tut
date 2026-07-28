@@ -4173,7 +4173,7 @@ export function OrchestrationSplit() {
                     key={s}
                     className="inline-flex items-center gap-1.5 rounded-lg border border-ink-300 bg-white px-3 py-1.5 font-mono text-xs text-ink-700 shadow-sm dark:border-ink-600 dark:bg-ink-900 dark:text-ink-200"
                   >
-                    <Wrench className="h-3 w-3 text-brand-400" />
+                    <Wrench className="h-3 w-3 text-ink-400 dark:text-ink-500" />
                     {s}
                   </span>
                 )
