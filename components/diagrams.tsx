@@ -16,6 +16,7 @@ import {
   Dices,
   Download,
   Eye,
+  EyeOff,
   FileCode,
   Folder,
   Gauge,
@@ -33,6 +34,7 @@ import {
   RotateCcw,
   Search,
   Settings,
+  Shield,
   ShoppingCart,
   SlidersHorizontal,
   Sparkles,
@@ -2937,6 +2939,222 @@ export function TokenStream() {
           ? "First words appear in a fraction of a second — the wait feels instant."
           : "Nothing appears until the whole response is ready — the user stares at a spinner."}
       </figcaption>
+    </figure>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* 28. TraceViewer — a LangSmith-style execution trace                 */
+/* ------------------------------------------------------------------ */
+
+const TRACE_SPANS = [
+  {
+    d: 0,
+    name: "agent_graph",
+    type: "chain",
+    ms: 1680,
+    detail: { input: 'HumanMessage("Weather in Paris?")', output: "4 messages", tokens: "—" },
+  },
+  {
+    d: 1,
+    name: "agent (llm)",
+    type: "llm",
+    ms: 820,
+    detail: {
+      input: '[HumanMessage("Weather in Paris?")]',
+      output: "AIMessage(tool_calls=[get_weather])",
+      tokens: "340 in · 45 out",
+    },
+  },
+  {
+    d: 1,
+    name: "tools · get_weather",
+    type: "tool",
+    ms: 210,
+    detail: { input: '{"city": "Paris"}', output: '"18°C, sunny"', tokens: "—" },
+  },
+  {
+    d: 1,
+    name: "agent (llm)",
+    type: "llm",
+    ms: 610,
+    detail: {
+      input: "[…conversation with tool result]",
+      output: 'AIMessage("It\'s 18°C and sunny in Paris.")',
+      tokens: "400 in · 30 out",
+    },
+  },
+];
+
+const SPAN_BADGE: Record<string, string> = {
+  chain: "bg-ink-200 text-ink-600 dark:bg-ink-800 dark:text-ink-300",
+  llm: "bg-brand-500/15 text-brand-700 dark:text-brand-300",
+  tool: "bg-amber-500/15 text-amber-700 dark:text-amber-300",
+};
+
+const SPAN_ICON: Record<string, typeof Brain> = {
+  chain: Workflow,
+  llm: Brain,
+  tool: Wrench,
+};
+
+export function TraceViewer() {
+  const [sel, setSel] = useState(1);
+  const maxMs = Math.max(...TRACE_SPANS.map((s) => s.ms));
+  const span = TRACE_SPANS[sel];
+
+  return (
+    <figure className="not-prose my-8 rounded-2xl border border-ink-200/70 bg-[rgb(var(--bg-subtle))] p-5 dark:border-ink-800/70 sm:p-6">
+      <span className="mb-4 inline-flex items-center gap-2 text-sm font-semibold text-ink-900 dark:text-white">
+        <Activity className="h-4 w-4 text-brand-500" />
+        An execution trace
+      </span>
+
+      <div className="grid gap-4 lg:grid-cols-[1.2fr_1fr]">
+        {/* span tree */}
+        <div className="space-y-1">
+          {TRACE_SPANS.map((s, i) => {
+            const Icon = SPAN_ICON[s.type];
+            return (
+              <button
+                key={i}
+                type="button"
+                onClick={() => setSel(i)}
+                style={{ paddingLeft: `${s.d * 18 + 8}px` }}
+                className={cn(
+                  "flex w-full items-center gap-2 rounded-lg border py-2 pr-2 text-left transition-all",
+                  sel === i
+                    ? "border-brand-400/60 bg-brand-500/10"
+                    : "border-transparent hover:bg-white/5"
+                )}
+              >
+                <Icon className="h-3.5 w-3.5 shrink-0 text-ink-400" />
+                <span className="min-w-0 flex-1">
+                  <span className="flex items-center gap-2">
+                    <span className="truncate font-mono text-[12.5px] text-ink-800 dark:text-ink-100">
+                      {s.name}
+                    </span>
+                    <span
+                      className={cn(
+                        "rounded px-1.5 py-0.5 text-[10px] font-medium uppercase",
+                        SPAN_BADGE[s.type]
+                      )}
+                    >
+                      {s.type}
+                    </span>
+                  </span>
+                  <span className="mt-1 flex items-center gap-2">
+                    <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-ink-200 dark:bg-ink-800">
+                      <span
+                        className="block h-full rounded-full bg-brand-500/70"
+                        style={{ width: `${(s.ms / maxMs) * 100}%` }}
+                      />
+                    </span>
+                    <span className="font-mono text-[10px] text-ink-400">
+                      {s.ms}ms
+                    </span>
+                  </span>
+                </span>
+              </button>
+            );
+          })}
+        </div>
+
+        {/* detail */}
+        <div
+          key={sel}
+          className="animate-fade-up self-start rounded-xl border border-ink-200/70 bg-white/60 p-4 dark:border-ink-800/70 dark:bg-ink-900/40"
+        >
+          <p className="font-mono text-sm font-semibold text-ink-900 dark:text-white">
+            {span.name}
+          </p>
+          <dl className="mt-3 space-y-2 text-[13px]">
+            <TraceRow k="latency" v={`${span.ms} ms`} />
+            <TraceRow k="tokens" v={span.detail.tokens} />
+            <TraceRow k="input" v={span.detail.input} mono />
+            <TraceRow k="output" v={span.detail.output} mono />
+          </dl>
+        </div>
+      </div>
+      <figcaption className="mt-4 text-center text-xs text-ink-400">
+        Click a span. A trace shows every node, model, and tool call — with its
+        inputs, outputs, latency, and tokens.
+      </figcaption>
+    </figure>
+  );
+}
+
+function TraceRow({ k, v, mono }: { k: string; v: string; mono?: boolean }) {
+  return (
+    <div>
+      <dt className="font-mono text-[11px] uppercase tracking-wide text-ink-400">
+        {k}
+      </dt>
+      <dd
+        className={cn(
+          "mt-0.5 break-words text-ink-700 dark:text-ink-200",
+          mono ? "font-mono text-[12px]" : ""
+        )}
+      >
+        {v}
+      </dd>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* 29. RedactionToggle — never log secrets                             */
+/* ------------------------------------------------------------------ */
+
+export function RedactionToggle() {
+  const [redact, setRedact] = useState(true);
+
+  const raw = `INFO node=fetch input={"api_key": "sk-ant-9f3a2c7b", "email": "ada@acme.com", "query": "orders"}`;
+  const safe = `INFO node=fetch input={"api_key": "***REDACTED***", "email": "a***@acme.com", "query": "orders"}`;
+
+  return (
+    <figure className="not-prose my-8 rounded-2xl border border-ink-200/70 bg-[rgb(var(--bg-subtle))] p-5 dark:border-ink-800/70 sm:p-6">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <span className="inline-flex items-center gap-2 text-sm font-semibold text-ink-900 dark:text-white">
+          <Shield className="h-4 w-4 text-brand-500" />
+          Redacting sensitive data in logs
+        </span>
+        <button
+          type="button"
+          onClick={() => setRedact((v) => !v)}
+          className={cn(
+            "inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium transition-all",
+            redact
+              ? "border-brand-400/60 bg-brand-500/10 text-brand-700 dark:text-brand-200"
+              : "border-rose-400/60 bg-rose-500/10 text-rose-700 dark:text-rose-300"
+          )}
+        >
+          {redact ? <Shield className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />}
+          Redaction {redact ? "on" : "off"}
+        </button>
+      </div>
+
+      <pre
+        className={cn(
+          "overflow-x-auto rounded-lg border p-3.5 font-mono text-[12.5px] leading-relaxed",
+          redact
+            ? "border-ink-800 bg-ink-950 text-ink-100"
+            : "border-rose-500/40 bg-rose-950/40 text-rose-100"
+        )}
+      >
+        <code>{redact ? safe : raw}</code>
+      </pre>
+
+      <p
+        className={cn(
+          "mt-3 text-xs",
+          redact ? "text-ink-400" : "text-rose-600 dark:text-rose-400"
+        )}
+      >
+        {redact
+          ? "Secrets and PII are masked before the line is written — safe to store and share."
+          : "This log line leaks an API key and a user's email. Anyone with log access now has them."}
+      </p>
     </figure>
   );
 }

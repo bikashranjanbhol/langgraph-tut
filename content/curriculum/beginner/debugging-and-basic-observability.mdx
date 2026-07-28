@@ -1,0 +1,129 @@
+---
+updated: "2026-07-26"
+---
+
+Agents are non-deterministic and multi-step, which makes them harder to debug than ordinary code — the same input can take different paths, and a failure three nodes deep can be hard to trace back. This chapter gives you the tools: reading exceptions, logging, inspecting state, spotting routing and loop bugs, and using LangSmith to *see* exactly what your graph did — safely, without leaking secrets.
+
+## 13.1 Reading exceptions
+
+When a node raises, LangGraph surfaces the exception with a traceback. Read it **bottom-up**: the last line is the actual error, and the frames above show the path into your node. The most common beginner errors have tell-tale signatures:
+
+- **`KeyError: 'x'`** — a node read a channel that isn't in the state. Provide it as input or set it earlier.
+- **`TypeError` / update errors** — a node returned something other than a `dict` (or `None`). Return `{"channel": value}`.
+- **`GraphRecursionError`** — a loop never terminated (see 13.5).
+- **Pydantic `ValidationError`** — bad data hit a validated state or tool schema.
+
+Matching the error type to its cause is usually the fastest first step.
+
+## 13.2 Logging node inputs and outputs
+
+The simplest observability is a log line. Print (or better, `log`) what a node receives and returns, so you can watch data flow through the graph:
+
+```python
+import logging
+
+log = logging.getLogger("graph")
+
+
+def retrieve(state: State) -> dict:
+    log.info("retrieve in: %s", state.get("query"))
+    result = {"documents": search(state["query"])}
+    log.info("retrieve out: %d docs", len(result["documents"]))
+    return result
+```
+
+Logging just the channels each node touches — not the whole state — keeps output readable and avoids dumping sensitive data (see 13.9).
+
+## 13.3 Inspecting graph state
+
+With a checkpointer attached (Chapter 11), you can inspect a thread's state directly, without adding prints. `get_state` returns the current values and which nodes run next:
+
+```python
+snapshot = graph.get_state(config)
+print(snapshot.values)   # all channel values right now
+print(snapshot.next)     # nodes queued to run next (empty if finished)
+```
+
+And `get_state_history` walks every checkpoint — priceless for seeing *how* the state got to where it is:
+
+```python
+for snap in graph.get_state_history(config):
+    print(snap.values.get("attempts"), "→", snap.next)
+```
+
+## 13.4 Identifying routing errors
+
+When a graph takes the wrong path, the culprit is almost always a **routing function**. Two failure modes dominate:
+
+- The router returns a value that **isn't in the mapping** → a `KeyError`, or an unexpected destination.
+- The router reads a channel that **isn't set yet** → it routes on `None`.
+
+Debug by logging the decision and making the mapping total:
+
+```python
+def route(state: State) -> str:
+    decision = "answer" if state.get("category") == "question" else "fallback"
+    log.info("route → %s (category=%s)", decision, state.get("category"))
+    return decision
+```
+
+And when in doubt, **visualise**: `print(graph.get_graph().draw_mermaid())` shows every branch, so a missing or misdirected edge jumps out.
+
+## 13.5 Debugging loops
+
+A loop that won't stop ends in `GraphRecursionError`. To debug it:
+
+- **Log the loop variables** each iteration — the attempt count and whatever your exit condition checks. If the score never changes, your generate step isn't actually improving anything.
+- **Lower the recursion limit** while debugging so it fails fast instead of running 25 steps: `graph.invoke(input, {"recursion_limit": 5})`.
+- **Inspect the state history** (13.3) to see exactly what each iteration changed — or didn't.
+
+Nine times out of ten, the bug is an exit condition that can never be satisfied, or a state value the loop forgets to update.
+
+## 13.6 Introduction to LangSmith tracing
+
+Print statements only take you so far. **LangSmith** captures every model call, tool invocation, and node transition as a structured **trace** you can explore visually — no code changes required. Turn it on with environment variables:
+
+```bash
+export LANGSMITH_TRACING="true"
+export LANGSMITH_API_KEY="lsv2_..."
+```
+
+That's it. With tracing on, every graph run appears in LangSmith as a nested trace. It's provider-agnostic and works with or without the rest of the LangChain ecosystem.
+
+## 13.7 Reviewing execution traces
+
+A trace is a **tree of spans** — each node, model, and tool call nested under the run, with its inputs, outputs, latency, and token usage. Explore a sample trace of a weather agent:
+
+<TraceViewer />
+
+This is how you debug a real agent: open the trace, find the span that looks wrong (a tool that returned an error, a model that got the wrong input, a step that took too long), and drill in. It turns "the agent gave a weird answer" into "the `get_weather` tool received the wrong city."
+
+## 13.8 Debugging tool calls
+
+Tool bugs are especially common, and traces make them obvious. In the trace, each tool span shows:
+
+- **The arguments the model chose** — did it extract the right values? A wrong argument usually means an unclear tool description (Chapter 10).
+- **The tool's output** — did it return what you expected, or an error?
+- **Errors, flagged inline** — recall that `ToolNode` turns tool failures into error messages, so a failing tool won't crash the run but *will* show up as an error `ToolMessage`.
+
+If an agent keeps misusing a tool, the fix is almost always to sharpen the tool's **name and description** so the model understands when and how to call it.
+
+## 13.9 Protecting sensitive information in logs
+
+Everything you log or trace can capture secrets and personal data — API keys, tokens, emails, whatever flows through your state. Treat logs and traces as places that data can **leak**. Flip the toggle to see the difference:
+
+<RedactionToggle />
+
+Practical safeguards:
+
+- **Redact before you log.** Mask secrets and PII rather than dumping raw state.
+- **Log channels, not the whole state.** Selective logging avoids accidental exposure.
+- **Be deliberate with LangSmith on sensitive data.** You can mask or hide inputs and outputs, and disable tracing for sensitive runs. Check your data-handling requirements before tracing production traffic.
+
+<Callout type="warning" title="Secrets don't belong in state">
+The cleanest defence is to keep secrets out of the graph's state entirely — pass them via config or environment, not as channels — so they can never be checkpointed, traced, or logged in the first place.
+</Callout>
+
+<Callout type="success" title="You can see inside your agents now">
+Reading exceptions, logging, inspecting state, tracing with LangSmith, and doing it all safely — you can find and fix what goes wrong. Next we step back and name the recurring shapes these graphs take: <strong>beginner design patterns</strong>.
+</Callout>
