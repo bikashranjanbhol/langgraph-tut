@@ -12,6 +12,7 @@ import {
   ChevronRight,
   Cloud,
   Code2,
+  Copy,
   Database,
   Dices,
   Download,
@@ -3678,6 +3679,387 @@ export function CapstoneBuilder() {
           <RotateCcw className="h-3.5 w-3.5" /> Reset
         </button>
       </div>
+    </figure>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* 32. ProjectExplorer — the full capstone project, file by file       */
+/* ------------------------------------------------------------------ */
+
+type ProjectRow =
+  | { kind: "folder"; name: string; d: number }
+  | { kind: "file"; name: string; d: number; lang: string; code: string };
+
+const PROJECT_FILES: ProjectRow[] = [
+  { kind: "folder", name: "support-assistant/", d: 0 },
+  { kind: "folder", name: "app/", d: 1 },
+  {
+    kind: "file",
+    name: "__init__.py",
+    d: 2,
+    lang: "python",
+    code: `from .graph import build_graph
+
+__all__ = ["build_graph"]`,
+  },
+  {
+    kind: "file",
+    name: "state.py",
+    d: 2,
+    lang: "python",
+    code: `from typing import Annotated
+from typing_extensions import TypedDict
+from langgraph.graph.message import add_messages
+
+
+class State(TypedDict):
+    """Everything the graph carries between nodes."""
+
+    # the conversation, auto-appended by the add_messages reducer
+    messages: Annotated[list, add_messages]
+    # the classifier's decision: "question" | "order" | "complaint"
+    category: str`,
+  },
+  {
+    kind: "file",
+    name: "tools.py",
+    d: 2,
+    lang: "python",
+    code: `from langchain_core.tools import tool
+
+# A tiny stand-in for a real orders database.
+_ORDERS = {
+    "A123": "Shipped - arriving Tuesday.",
+    "B456": "Processing - ships within 24 hours.",
+}
+
+
+@tool
+def lookup_order(order_id: str) -> str:
+    """Look up the status of an order by its ID (e.g. 'A123')."""
+    return _ORDERS.get(order_id.strip("# "), "No order found with that ID.")`,
+  },
+  {
+    kind: "file",
+    name: "nodes.py",
+    d: 2,
+    lang: "python",
+    code: `from langchain_core.messages import AIMessage, SystemMessage
+from langchain_openai import ChatOpenAI
+
+from .state import State
+from .tools import lookup_order
+
+# One model for classifying, one (tool-bound) for answering.
+_llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
+_answerer = _llm.bind_tools([lookup_order])
+
+_CATEGORIES = {"question", "order", "complaint"}
+
+
+def classify(state: State) -> dict:
+    """Label the latest user message so we can route it."""
+    prompt = [
+        SystemMessage(
+            "Classify the user's message as exactly one word: "
+            "question, order, or complaint."
+        ),
+        state["messages"][-1],
+    ]
+    label = _llm.invoke(prompt).content.strip().lower()
+    return {"category": label if label in _CATEGORIES else "question"}
+
+
+def answer(state: State) -> dict:
+    """Reply to the customer, calling the order tool when needed."""
+    system = SystemMessage(
+        "You are a helpful support assistant for Acme Corp. "
+        "Use the lookup_order tool when the customer mentions an order."
+    )
+    reply = _answerer.invoke([system, *state["messages"]])
+    return {"messages": [reply]}
+
+
+def escalate(state: State) -> dict:
+    """Hand a complaint off to a human agent."""
+    return {
+        "messages": [
+            AIMessage(
+                "I'm sorry you've had a bad experience. I've flagged this "
+                "for a human agent who will follow up shortly."
+            )
+        ]
+    }
+
+
+def route(state: State) -> str:
+    """Send complaints to a human, everything else to the assistant."""
+    return "escalate" if state["category"] == "complaint" else "answer"`,
+  },
+  {
+    kind: "file",
+    name: "graph.py",
+    d: 2,
+    lang: "python",
+    code: `from langgraph.graph import StateGraph, START, END
+from langgraph.prebuilt import ToolNode, tools_condition
+from langgraph.checkpoint.memory import MemorySaver
+
+from .state import State
+from .tools import lookup_order
+from .nodes import classify, answer, escalate, route
+
+
+def build_graph():
+    """Assemble and compile the support-assistant graph."""
+    builder = StateGraph(State)
+
+    # 1. nodes
+    builder.add_node("classify", classify)
+    builder.add_node("answer", answer)
+    builder.add_node("escalate", escalate)
+    builder.add_node("tools", ToolNode([lookup_order]))
+
+    # 2. edges & routes
+    builder.add_edge(START, "classify")
+    builder.add_conditional_edges(
+        "classify", route, {"answer": "answer", "escalate": "escalate"}
+    )
+    # answer loops through tools until it's ready to reply
+    builder.add_conditional_edges("answer", tools_condition)
+    builder.add_edge("tools", "answer")
+    builder.add_edge("escalate", END)
+
+    # 3. memory: a checkpointer gives every thread_id its own history
+    return builder.compile(checkpointer=MemorySaver())`,
+  },
+  {
+    kind: "file",
+    name: "main.py",
+    d: 1,
+    lang: "python",
+    code: `"""Streaming console chat for the customer-support assistant."""
+from app import build_graph
+
+graph = build_graph()
+
+
+def chat(thread_id: str = "demo") -> None:
+    config = {"configurable": {"thread_id": thread_id}}
+    print("Support assistant ready. Type 'quit' to exit.\\n")
+
+    while True:
+        user = input("You: ").strip()
+        if user.lower() in {"quit", "exit"}:
+            break
+
+        # stream only the customer-facing reply, token by token
+        print("Assistant: ", end="", flush=True)
+        for token, meta in graph.stream(
+            {"messages": [("user", user)]},
+            config,
+            stream_mode="messages",
+        ):
+            if meta["langgraph_node"] == "answer" and token.content:
+                print(token.content, end="", flush=True)
+        print("\\n")
+
+
+if __name__ == "__main__":
+    chat()`,
+  },
+  {
+    kind: "file",
+    name: "requirements.txt",
+    d: 1,
+    lang: "text",
+    code: `langgraph>=0.2
+langchain-openai>=0.2
+python-dotenv>=1.0`,
+  },
+  {
+    kind: "file",
+    name: ".env.example",
+    d: 1,
+    lang: "text",
+    code: `# Copy this file to .env and fill in your key.
+OPENAI_API_KEY=sk-...
+
+# Optional: turn on LangSmith tracing while debugging.
+LANGSMITH_TRACING=true
+LANGSMITH_API_KEY=lsv2_...`,
+  },
+  {
+    kind: "file",
+    name: "README.md",
+    d: 1,
+    lang: "md",
+    code: `# Customer-Support Assistant
+
+A LangGraph agent that classifies customer messages, answers questions
+(looking up orders with a tool), escalates complaints to a human, and
+streams its replies. Built as the Part I capstone.
+
+## Setup
+
+    python -m venv .venv
+    source .venv/bin/activate      # Windows: .venv\\Scripts\\activate
+    pip install -r requirements.txt
+    cp .env.example .env           # then add your OPENAI_API_KEY
+
+## Run
+
+    python main.py
+
+    You: Where is my order #A123?
+    Assistant: Your order A123 has shipped - it's arriving Tuesday.
+
+## How it works
+
+    START -> classify -> (answer <-> tools) or escalate -> END
+
+- state.py  - the shared State (messages + category)
+- tools.py  - the lookup_order tool
+- nodes.py  - classify / answer / escalate + the router
+- graph.py  - wires the nodes, tools, and memory together
+- main.py   - a streaming console chat loop`,
+  },
+];
+
+function CodeLines({ code, lang }: { code: string; lang: string }) {
+  const commentable = lang !== "md";
+  return (
+    <code className="grid">
+      {code.split("\n").map((line, i) => {
+        const isComment = commentable && line.trimStart().startsWith("#");
+        return (
+          <span
+            key={i}
+            className={cn(
+              "whitespace-pre",
+              isComment ? "text-ink-500" : "text-ink-100"
+            )}
+          >
+            {line || " "}
+          </span>
+        );
+      })}
+    </code>
+  );
+}
+
+export function ProjectExplorer() {
+  const fileIndexes = PROJECT_FILES.map((r, i) => ({ r, i })).filter(
+    (x) => x.r.kind === "file"
+  );
+  // default to graph.py — the heart of the project
+  const defaultIdx =
+    fileIndexes.find((x) => x.r.kind === "file" && x.r.name === "graph.py")
+      ?.i ?? fileIndexes[0].i;
+  const [sel, setSel] = useState<number>(defaultIdx);
+  const [copied, setCopied] = useState(false);
+
+  const active = PROJECT_FILES[sel];
+  const file = active.kind === "file" ? active : null;
+
+  const copy = async () => {
+    if (!file) return;
+    try {
+      await navigator.clipboard.writeText(file.code);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      /* clipboard unavailable — ignore */
+    }
+  };
+
+  return (
+    <figure className="not-prose my-8 rounded-2xl border border-ink-200/70 bg-[rgb(var(--bg-subtle))] p-5 dark:border-ink-800/70 sm:p-6">
+      <span className="mb-4 inline-flex items-center gap-2 text-sm font-semibold text-ink-900 dark:text-white">
+        <Folder className="h-4 w-4 text-brand-500" />
+        The finished project, file by file
+      </span>
+
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,15rem)_1fr]">
+        {/* file tree */}
+        <div className="h-max rounded-xl border border-ink-200/70 bg-ink-950 p-2 dark:border-ink-800/70">
+          {PROJECT_FILES.map((row, i) => {
+            if (row.kind === "folder") {
+              return (
+                <div
+                  key={i}
+                  style={{ paddingLeft: `${row.d * 16 + 10}px` }}
+                  className="flex items-center gap-2 py-1.5 pr-2 font-mono text-[13px] text-ink-400"
+                >
+                  <Folder className="h-3.5 w-3.5 shrink-0 text-brand-400" />
+                  {row.name}
+                </div>
+              );
+            }
+            return (
+              <button
+                key={i}
+                type="button"
+                onClick={() => setSel(i)}
+                style={{ paddingLeft: `${row.d * 16 + 10}px` }}
+                className={cn(
+                  "flex w-full items-center gap-2 rounded-md py-1.5 pr-2 text-left font-mono text-[13px] transition-colors",
+                  sel === i
+                    ? "bg-brand-500/20 text-white"
+                    : "text-ink-300 hover:bg-white/5"
+                )}
+              >
+                <FileCode
+                  className={cn(
+                    "h-3.5 w-3.5 shrink-0",
+                    sel === i ? "text-brand-300" : "text-ink-500"
+                  )}
+                />
+                {row.name}
+              </button>
+            );
+          })}
+        </div>
+
+        {/* code panel */}
+        <div className="min-w-0 overflow-hidden rounded-xl border border-ink-800 bg-ink-950">
+          <div className="flex items-center justify-between border-b border-ink-800 px-4 py-2">
+            <span className="inline-flex items-center gap-2 font-mono text-xs text-ink-300">
+              <FileCode className="h-3.5 w-3.5 text-brand-400" />
+              {file?.name}
+              <span className="rounded border border-ink-700 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-ink-500">
+                {file?.lang}
+              </span>
+            </span>
+            <button
+              type="button"
+              onClick={copy}
+              className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium text-ink-400 transition-colors hover:text-brand-300"
+            >
+              {copied ? (
+                <>
+                  <Check className="h-3.5 w-3.5" /> Copied
+                </>
+              ) : (
+                <>
+                  <Copy className="h-3.5 w-3.5" /> Copy
+                </>
+              )}
+            </button>
+          </div>
+          <pre
+            key={sel}
+            className="animate-fade-up max-h-[26rem] overflow-auto p-4 font-mono text-[13px] leading-relaxed"
+          >
+            {file && <CodeLines code={file.code} lang={file.lang} />}
+          </pre>
+        </div>
+      </div>
+      <figcaption className="mt-4 text-center text-xs text-ink-400">
+        Click any file to read its code. Together these eight files are the
+        complete, runnable assistant.
+      </figcaption>
     </figure>
   );
 }

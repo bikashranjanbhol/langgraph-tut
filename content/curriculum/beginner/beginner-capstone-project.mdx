@@ -190,6 +190,14 @@ Putting it all together, here's the full brief to build on your own:
 
 You have everything you need for this. Work through the same steps you just stepped through in the diagram — requirements, design, state, nodes, tools, memory, streaming, tests, docs — and you'll finish Part I with a real, working agent you built yourself.
 
+### The complete reference implementation
+
+Here's the whole project laid out the way you'd organise it on disk — eight small files, each with one clear job. Click through them to see exactly how the pieces from this chapter fit together into a runnable app. Try to build yours *before* peeking, then compare:
+
+<ProjectExplorer />
+
+Each file maps to a section you just read: `state.py` is 15.3, `nodes.py` is 15.4, `tools.py` is 15.5, and `graph.py` (15.2–15.6) wires nodes, tools, and memory together. `main.py` is the streaming chat loop from 15.7, and `README.md` is the documentation from 15.9. To run it, drop these files into a folder, `pip install -r requirements.txt`, set your `OPENAI_API_KEY`, and `python main.py`.
+
 <Callout type="tip" title="Make it yours">
 Prefer a different domain? Swap the support assistant for a research helper, a coding assistant, or a personal task manager. The skeleton — classify, route, tools, memory, streaming — stays the same; only the nodes and tools change.
 </Callout>
