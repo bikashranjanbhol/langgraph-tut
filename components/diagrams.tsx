@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
   Activity,
+  ArrowDown,
   ArrowRight,
   Blocks,
   Bot,
@@ -4154,9 +4155,12 @@ export function OrchestrationSplit() {
               <Chip label="END" terminal />
             </div>
           </div>
-          <div className="flex justify-center gap-10 text-ink-300">
-            <ArrowRight className="h-4 w-4 rotate-90" />
-            <ArrowRight className="h-4 w-4 rotate-90" />
+          <div className="flex items-center justify-center gap-3 py-1 text-brand-500">
+            <ArrowDown className="h-7 w-7" strokeWidth={2.25} />
+            <span className="rounded-full border border-brand-400/40 bg-brand-500/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-wide text-brand-600 dark:text-brand-300">
+              nodes call services
+            </span>
+            <ArrowDown className="h-7 w-7" strokeWidth={2.25} />
           </div>
           <div className="rounded-xl border border-ink-200/70 bg-white/50 p-4 dark:border-ink-800/70 dark:bg-ink-900/40">
             <p className="mb-3 text-center text-xs font-semibold uppercase tracking-wide text-ink-500">
